@@ -180,6 +180,17 @@ export class ConversationView extends ItemView {
         this.messages.push(userMessage);
         await this.renderMessage(userMessage);
 
+        // Generate chat name after first user message
+        if (!this.chatName && this.messages.filter(m => m.role === 'user').length === 1) {
+            try {
+                const response = await this.plugin.generateChatName(content);
+                this.chatName = response.replace(/[<>:"/\\|?*]/g, '-').trim();
+            } catch (error) {
+                console.error('Failed to generate chat name:', error);
+                this.chatName = 'Untitled Chat';
+            }
+        }
+
         const loadingEl = this.showLoadingIndicator();
 
         try {
@@ -329,6 +340,9 @@ export class ConversationView extends ItemView {
         // Clear existing messages
         this.messages = [];
         this.messageContainer.empty();
+        
+        // Clear chat name
+        this.chatName = null;
         
         // Clear conversation history in plugin
         this.plugin.clearConversationHistory();
