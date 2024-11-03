@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer } from 'obsidian';
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, TFile, TAbstractFile } from 'obsidian';
 import TesseraPlugin from '../main';
 
 interface ChatMessage {
@@ -33,6 +33,22 @@ export class ConversationView extends ItemView {
         
         // Main chat container
         const chatContainer = container.createDiv('tessera-chat-container');
+        
+        // Header with save button
+        const header = chatContainer.createDiv('tessera-chat-header');
+        const saveButton = header.createEl('button', {
+            cls: 'tessera-save-button',
+            attr: {
+                'aria-label': 'Save conversation'
+            }
+        });
+        saveButton.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+        </svg>`;
+        
+        saveButton.addEventListener('click', () => this.saveConversation());
         
         // Messages area
         this.messageContainer = chatContainer.createDiv('tessera-messages');
@@ -214,6 +230,52 @@ export class ConversationView extends ItemView {
         }
         
         return loadingEl;
+    }
+
+    private async saveConversation() {
+        if (this.messages.length === 0) {
+            new Notice('No messages to save');
+            return;
+        }
+
+        // Create chats folder if it doesn't exist
+        const chatsPath = 'chats';
+        if (!(await this.app.vault.adapter.exists(chatsPath))) {
+            await this.app.vault.createFolder(chatsPath);
+        }
+
+        // Generate filename with timestamp
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const filename = `${chatsPath}/chat-${timestamp}.md`;
+
+        // Convert messages to markdown
+        let markdown = '# Chat History\n\n';
+        markdown += `*${new Date().toLocaleString()}*\n\n`;
+        
+        for (const msg of this.messages) {
+            const icon = msg.role === 'assistant' ? '🔹' : '🟠';
+            const name = msg.role === 'assistant' ? 'Tessera' : 'You';
+            
+            // Split message into lines and wrap each in a blockquote
+            const lines = msg.content.split('\n').map(line => `> ${line}`).join('\n');
+            
+            markdown += `${icon} **${name}**\n${lines}\n\n`;
+        }
+
+        // Save the file
+        try {
+            await this.app.vault.create(filename, markdown);
+            new Notice('Conversation saved');
+            
+            // Open the file in a new leaf
+            const abstractFile = this.app.vault.getAbstractFileByPath(filename);
+            if (abstractFile instanceof TFile) {
+                await this.app.workspace.getLeaf(false).openFile(abstractFile);
+            }
+        } catch (error) {
+            console.error('Failed to save conversation:', error);
+            new Notice('Failed to save conversation');
+        }
     }
 
     private addStyles() {
@@ -416,6 +478,32 @@ export class ConversationView extends ItemView {
             .tessera-message code {
                 cursor: text;
                 user-select: text;
+            }
+
+            .tessera-chat-header {
+                display: flex;
+                justify-content: flex-end;
+                padding: 0.5rem;
+                border-bottom: 1px solid var(--background-modifier-border);
+                margin-bottom: 0.5rem;
+            }
+
+            .tessera-save-button {
+                background: none;
+                border: none;
+                padding: 0.5rem;
+                cursor: pointer;
+                color: var(--text-muted);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 4px;
+                transition: all 0.2s ease;
+            }
+
+            .tessera-save-button:hover {
+                color: var(--text-normal);
+                background-color: var(--background-modifier-hover);
             }
         `;
         document.head.append(style);
