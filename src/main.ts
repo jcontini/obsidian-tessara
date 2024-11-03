@@ -59,6 +59,11 @@ interface Tool {
     };
 }
 
+interface ContextUpdate {
+    filename: string;
+    path: string;
+}
+
 export default class TesseraPlugin extends Plugin {
     private anthropic: Anthropic;
     settings: TesseraSettings;
@@ -264,6 +269,7 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
         if (response.content[0].type === 'tool_use') {
             const toolUse = response.content[0];
             let result: string;
+            let contextUpdate: ContextUpdate | null = null;
 
             try {
                 const toolInput = toolUse.input as ToolInput;
@@ -271,12 +277,20 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
                 if (toolUse.name === 'update_context') {
                     await this.contextManager.appendToUserContext(toolInput.content);
                     result = "Context updated successfully";
+                    contextUpdate = {
+                        filename: 'Profile.md',
+                        path: 'Context/Profile.md'
+                    };
                 } else if (toolUse.name === 'create_context_file') {
                     const path = await this.contextManager.createNewContextFile(
                         toolInput.filename!,
                         toolInput.content
                     );
                     result = `Created new context file: ${path}`;
+                    contextUpdate = {
+                        filename: toolInput.filename! + (toolInput.filename!.endsWith('.md') ? '' : '.md'),
+                        path: path
+                    };
                 } else {
                     result = "Unknown tool";
                 }
@@ -308,6 +322,16 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
                     this.conversationHistory.push({
                         role: 'assistant',
                         content: toolResponse.content[0].text
+                    });
+                }
+
+                // Emit context update event if applicable
+                if (contextUpdate) {
+                    this.app.workspace.getLeavesOfType('tessera-chat').forEach(leaf => {
+                        const view = leaf.view as ConversationView;
+                        if (view?.showContextUpdateNotification && contextUpdate) {
+                            view.showContextUpdateNotification(contextUpdate);
+                        }
                     });
                 }
 

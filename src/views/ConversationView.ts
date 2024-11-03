@@ -8,6 +8,11 @@ interface ChatMessage {
     timestamp: number;
 }
 
+interface ContextUpdate {
+    filename: string;
+    path: string;
+}
+
 export class ConversationView extends ItemView {
     private messages: ChatMessage[] = [];
     private messageContainer: HTMLElement;
@@ -613,6 +618,46 @@ export class ConversationView extends ItemView {
                 color: var(--text-normal);
                 background-color: var(--background-modifier-hover);
             }
+
+            .tessera-context-notification {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.5rem 0.8rem;
+                background-color: var(--background-secondary);
+                border-radius: 8px;
+                color: var(--text-muted);
+                font-size: 0.9em;
+                border: 1px solid var(--background-modifier-border);
+                margin-bottom: 0.8rem;
+            }
+
+            .tessera-context-icon {
+                display: flex;
+                align-items: center;
+                color: var(--text-accent);
+                animation: spin 2s linear infinite;
+            }
+
+            @keyframes spin {
+                100% { transform: rotate(360deg); }
+            }
+
+            .tessera-context-badge {
+                background-color: var(--background-modifier-border);
+                color: var(--text-muted);
+                padding: 0.2rem 0.5rem;
+                border-radius: 4px;
+                font-size: 0.8em;
+                cursor: pointer;
+                border: none;
+                transition: all 0.2s ease;
+            }
+
+            .tessera-context-badge:hover {
+                background-color: var(--interactive-accent);
+                color: var(--text-on-accent);
+            }
         `;
         document.head.append(style);
     }
@@ -692,5 +737,30 @@ export class ConversationView extends ItemView {
         
         this.messages.push(fullMessage);
         await this.renderMessage(fullMessage);
+    }
+
+    public showContextUpdateNotification(update: ContextUpdate) {
+        const wrapper = this.messageContainer.createDiv('tessera-message-wrapper assistant');
+        const notificationEl = wrapper.createDiv('tessera-context-notification');
+        
+        const icon = notificationEl.createSpan('tessera-context-icon');
+        icon.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+        </svg>`;
+        
+        const text = notificationEl.createSpan();
+        text.setText('Updated context: ');
+        
+        const badge = notificationEl.createEl('button', {
+            cls: 'tessera-context-badge',
+            text: update.filename
+        });
+        
+        badge.addEventListener('click', async () => {
+            const file = this.app.vault.getAbstractFileByPath(update.path);
+            if (file instanceof TFile) {
+                await this.app.workspace.getLeaf(false).openFile(file);
+            }
+        });
     }
 } 

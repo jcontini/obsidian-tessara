@@ -1,0 +1,16 @@
+.retry-container {
+    margin-top: 8px;
+}
+
+.retry-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.retry-button:hover {
+    opacity: 0.9;
+} 
