@@ -1,0 +1,6 @@
+{
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.31.0",
+    "obsidian": "^1.7.2"
+  }
+}

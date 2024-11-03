@@ -1,0 +1,10 @@
+{
+    "id": "tessera",
+    "name": "Tessera",
+    "version": "0.1.0",
+    "minAppVersion": "1.0.0",
+    "description": "A trusted interface for AI-enhanced personal development and knowledge management",
+    "author": "Your Name",
+    "authorUrl": "https://github.com/your-username",
+    "isDesktopOnly": false
+} 
