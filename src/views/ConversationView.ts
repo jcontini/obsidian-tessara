@@ -11,6 +11,7 @@ export class ConversationView extends ItemView {
     private messages: ChatMessage[] = [];
     private messageContainer: HTMLElement;
     private inputContainer: HTMLElement;
+    private chatName: string | null = null;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -88,7 +89,8 @@ export class ConversationView extends ItemView {
 
         // Event listeners
         textarea.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if ((e.key === 'Enter' && !e.shiftKey) || 
+                (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
                 e.preventDefault();
                 this.sendMessage(textarea.value);
                 textarea.value = '';
@@ -258,37 +260,61 @@ export class ConversationView extends ItemView {
             return;
         }
 
-        // Create Saved Chats folder if it doesn't exist
-        const chatsPath = 'Saved Chats';
-        if (!(await this.app.vault.adapter.exists(chatsPath))) {
-            await this.app.vault.createFolder(chatsPath);
+        // Create base Saved Chats folder if it doesn't exist
+        const basePath = 'Saved Chats';
+        if (!(await this.app.vault.adapter.exists(basePath))) {
+            await this.app.vault.createFolder(basePath);
         }
 
-        // Generate filename with timestamp
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `${chatsPath}/Chat-${timestamp}.md`;
+        // Create date-based folder (format: YYYY-MM-DD)
+        const today = new Date().toISOString().slice(0, 10);
+        const datePath = `${basePath}/${today}`;
+        if (!(await this.app.vault.adapter.exists(datePath))) {
+            await this.app.vault.createFolder(datePath);
+        }
+
+        // Generate chat name using AI if not already generated
+        if (!this.chatName && this.messages.length > 0) {
+            const firstUserMessage = this.messages.find(m => m.role === 'user')?.content;
+            if (firstUserMessage) {
+                try {
+                    const response = await this.plugin.generateChatName(firstUserMessage);
+                    this.chatName = response.replace(/[<>:"/\\|?*]/g, '-').trim();
+                } catch (error) {
+                    console.error('Failed to generate chat name:', error);
+                    this.chatName = 'Untitled Chat';
+                }
+            }
+        }
+
+        const filename = `${datePath}/${this.chatName || 'Untitled Chat'}.md`;
+
+        // Add numeric suffix if file already exists
+        let finalFilename = filename;
+        let counter = 1;
+        while (await this.app.vault.adapter.exists(finalFilename)) {
+            finalFilename = `${datePath}/${this.chatName || 'Untitled Chat'} (${counter}).md`;
+            counter++;
+        }
 
         // Convert messages to markdown
-        let markdown = '# Chat History\n\n';
+        let markdown = `# ${this.chatName || 'Chat History'}\n\n`;
         markdown += `*${new Date().toLocaleString()}*\n\n`;
         
         for (const msg of this.messages) {
             const icon = msg.role === 'assistant' ? '🔹' : '🟠';
             const name = msg.role === 'assistant' ? 'Tessera' : 'You';
-            
-            // Split message into lines and wrap each in a blockquote
             const lines = msg.content.split('\n').map(line => `> ${line}`).join('\n');
-            
             markdown += `${icon} **${name}**\n${lines}\n\n`;
         }
 
         // Save the file
         try {
-            await this.app.vault.create(filename, markdown);
+            await this.app.vault.create(finalFilename, markdown);
             new Notice('Conversation saved');
             
             // Open the file in a new leaf
-            const abstractFile = this.app.vault.getAbstractFileByPath(filename);
+            const abstractFile = this.app.vault.getAbstractFileByPath(finalFilename);
             if (abstractFile instanceof TFile) {
                 await this.app.workspace.getLeaf(false).openFile(abstractFile);
             }

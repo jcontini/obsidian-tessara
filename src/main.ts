@@ -205,4 +205,24 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
     clearConversationHistory() {
         this.conversationHistory = [];
     }
+
+    async generateChatName(firstMessage: string): Promise<string> {
+        if (!this.anthropic) {
+            throw new Error('Claude client not initialized');
+        }
+
+        const response = await this.anthropic.messages.create({
+            model: this.settings.selectedModel || 'claude-3-sonnet-20240229',
+            max_tokens: 50,
+            messages: [{
+                role: 'user',
+                content: `Based on this first message from a chat, generate a short, descriptive title (3-5 words) that captures the main topic. Don't use quotes or special characters. Message: "${firstMessage}"`
+            }],
+            system: "You are a chat title generator. Respond only with the title - no explanation or additional text. Keep titles clear and concise."
+        });
+
+        return response.content[0].type === 'text' 
+            ? response.content[0].text.trim()
+            : 'Untitled Chat';
+    }
 } 
