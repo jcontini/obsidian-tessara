@@ -24,6 +24,41 @@ const DEFAULT_SETTINGS: TesseraSettings = {
     customModel: ''
 };
 
+interface ToolInput {
+    content: string;
+    filename?: string;
+}
+
+interface ContextTool extends Tool {
+    name: "update_context" | "create_context_file";
+    description: string;
+    input_schema: {
+        type: "object";
+        properties: {
+            content: {
+                type: "string";
+                description: string;
+            };
+            filename?: {
+                type: "string";
+                description: string;
+            };
+        };
+        required: string[];
+    };
+}
+
+// Define Tool interface based on Claude's API schema
+interface Tool {
+    name: string;
+    description: string;
+    input_schema: {
+        type: "object";
+        properties: Record<string, any>;
+        required?: string[];
+    };
+}
+
 export default class TesseraPlugin extends Plugin {
     private anthropic: Anthropic;
     settings: TesseraSettings;
@@ -130,9 +165,9 @@ export default class TesseraPlugin extends Plugin {
         if (!this.anthropic) {
             throw new Error('Claude client not initialized');
         }
-        
+
         const contextContent = await this.contextManager.getContextContent();
-        
+
         const systemPrompt = `You are a thoughtful AI assistant focused on helping users achieve their goals while maintaining helpful context about them.
 
 Current context about the user:
@@ -147,7 +182,7 @@ Your approach:
 2. Context gathering
    - Ask natural follow-up questions that flow from the conversation
    - Only ask ONE question at a time
-   - When you learn something important, say "I'll note that down..."
+   - When you learn something important about the user, use the update_context tool
    - Focus on understanding what matters for their current goal
 
 3. Communication style
@@ -156,9 +191,9 @@ Your approach:
    - Stay professional but friendly
    - Keep responses focused and relevant
 
-Special Commands:
-- When you learn something important: !update_context [content]
-- To create a new context file: !create_context [filename] [content]
+Available Tools:
+- update_context: Use this when you learn important information about the user
+- create_context_file: Use this to create new context files for organizing information
 
 For START_CONVERSATION:
 - Simply ask "What's on your mind?"
@@ -166,6 +201,41 @@ For START_CONVERSATION:
 - Don't ask about AI or previous experiences unless relevant
 
 Remember: Focus on what the user wants to discuss. Ask only ONE question at a time to maintain a natural conversation flow.`;
+
+        const tools: ContextTool[] = [
+            {
+                name: "update_context",
+                description: "Append new information about the user to their profile in Context/Profile.md. Use this when you learn important information about the user that should be remembered for future conversations.",
+                input_schema: {
+                    type: "object",
+                    properties: {
+                        content: {
+                            type: "string",
+                            description: "The information to append to the user's profile"
+                        }
+                    },
+                    required: ["content"]
+                }
+            },
+            {
+                name: "create_context_file",
+                description: "Create a new markdown file in the Context folder to store specific information. Use this for organizing different types of context into separate files.",
+                input_schema: {
+                    type: "object",
+                    properties: {
+                        filename: {
+                            type: "string",
+                            description: "Name of the file to create (will append .md if not included)"
+                        },
+                        content: {
+                            type: "string",
+                            description: "Initial content for the file"
+                        }
+                    },
+                    required: ["filename", "content"]
+                }
+            }
+        ];
 
         // Handle initial message specially
         if (content === "START_CONVERSATION") {
@@ -176,7 +246,6 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
             };
             this.conversationHistory.push(userMessage);
         } else {
-            // Add the new user message to history
             this.conversationHistory.push({
                 role: 'user',
                 content: content
@@ -187,10 +256,89 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
             model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
             max_tokens: 1024,
             system: systemPrompt,
-            messages: this.conversationHistory
+            messages: this.conversationHistory,
+            tools: tools
         });
 
-        // Add assistant's response to history
+        // Handle tool use if present
+        if (response.content[0].type === 'tool_use') {
+            const toolUse = response.content[0];
+            let result: string;
+
+            try {
+                const toolInput = toolUse.input as ToolInput;
+                
+                if (toolUse.name === 'update_context') {
+                    await this.contextManager.appendToUserContext(toolInput.content);
+                    result = "Context updated successfully";
+                } else if (toolUse.name === 'create_context_file') {
+                    const path = await this.contextManager.createNewContextFile(
+                        toolInput.filename!,
+                        toolInput.content
+                    );
+                    result = `Created new context file: ${path}`;
+                } else {
+                    result = "Unknown tool";
+                }
+
+                // Send tool result back to Claude
+                const toolResponse = await this.anthropic.messages.create({
+                    model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
+                    max_tokens: 1024,
+                    system: systemPrompt,
+                    messages: [
+                        ...this.conversationHistory,
+                        {
+                            role: 'assistant',
+                            content: [toolUse]
+                        },
+                        {
+                            role: 'user',
+                            content: [{
+                                type: 'tool_result',
+                                tool_use_id: toolUse.id,
+                                content: result
+                            }]
+                        }
+                    ]
+                });
+
+                // Add the final response to history
+                if (toolResponse.content[0].type === 'text') {
+                    this.conversationHistory.push({
+                        role: 'assistant',
+                        content: toolResponse.content[0].text
+                    });
+                }
+
+                return toolResponse;
+            } catch (error) {
+                console.error('Tool execution failed:', error);
+                // Handle tool execution error
+                return this.anthropic.messages.create({
+                    model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
+                    max_tokens: 1024,
+                    messages: [
+                        ...this.conversationHistory,
+                        {
+                            role: 'assistant',
+                            content: [toolUse]
+                        },
+                        {
+                            role: 'user',
+                            content: [{
+                                type: 'tool_result',
+                                tool_use_id: toolUse.id,
+                                content: error.message,
+                                is_error: true
+                            }]
+                        }
+                    ]
+                });
+            }
+        }
+
+        // Handle regular text response
         if (response.content[0].type === 'text') {
             this.conversationHistory.push({
                 role: 'assistant',

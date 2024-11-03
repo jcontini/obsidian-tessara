@@ -35,11 +35,11 @@ export class ConversationView extends ItemView {
         // Main chat container
         const chatContainer = container.createDiv('tessera-chat-container');
         
-        // Header with save button
+        // Header with buttons
         const header = chatContainer.createDiv('tessera-chat-header');
-
         const headerButtons = header.createDiv('tessera-header-buttons');
 
+        // New chat button
         const newChatButton = headerButtons.createEl('button', {
             cls: 'tessera-header-button',
             attr: {
@@ -50,6 +50,19 @@ export class ConversationView extends ItemView {
             <path d="M12 5v14M5 12h14"/>
         </svg>`;
 
+        // Copy all button
+        const copyAllButton = headerButtons.createEl('button', {
+            cls: 'tessera-header-button',
+            attr: {
+                'aria-label': 'Copy conversation'
+            }
+        });
+        copyAllButton.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>`;
+
+        // Save button
         const saveButton = headerButtons.createEl('button', {
             cls: 'tessera-header-button',
             attr: {
@@ -61,9 +74,21 @@ export class ConversationView extends ItemView {
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
             <polyline points="7 3 7 8 15 8"></polyline>
         </svg>`;
+
+        // Add event listeners
+        newChatButton.addEventListener('click', async () => {
+            if (this.messages.length > 0) {
+                await this.saveConversation();
+            }
+            this.startNewChat();
+        });
+
+        copyAllButton.addEventListener('click', async () => {
+            await this.copyConversation();
+        });
         
         saveButton.addEventListener('click', () => this.saveConversation());
-        
+
         // Messages area
         this.messageContainer = chatContainer.createDiv('tessera-messages');
         
@@ -100,13 +125,6 @@ export class ConversationView extends ItemView {
         sendButton.addEventListener('click', () => {
             this.sendMessage(textarea.value);
             textarea.value = '';
-        });
-
-        newChatButton.addEventListener('click', async () => {
-            if (this.messages.length > 0) {
-                await this.saveConversation();
-            }
-            this.startNewChat();
         });
 
         // Add styles
@@ -251,6 +269,12 @@ export class ConversationView extends ItemView {
             indicator.createSpan();
         }
         
+        // Scroll to bottom immediately after adding the loading indicator
+        this.messageContainer.scrollTo({
+            top: this.messageContainer.scrollHeight,
+            behavior: 'smooth'
+        });
+        
         return loadingEl;
     }
 
@@ -273,20 +297,6 @@ export class ConversationView extends ItemView {
             await this.app.vault.createFolder(datePath);
         }
 
-        // Generate chat name using AI if not already generated
-        if (!this.chatName && this.messages.length > 0) {
-            const firstUserMessage = this.messages.find(m => m.role === 'user')?.content;
-            if (firstUserMessage) {
-                try {
-                    const response = await this.plugin.generateChatName(firstUserMessage);
-                    this.chatName = response.replace(/[<>:"/\\|?*]/g, '-').trim();
-                } catch (error) {
-                    console.error('Failed to generate chat name:', error);
-                    this.chatName = 'Untitled Chat';
-                }
-            }
-        }
-
         const filename = `${datePath}/${this.chatName || 'Untitled Chat'}.md`;
 
         // Add numeric suffix if file already exists
@@ -297,16 +307,7 @@ export class ConversationView extends ItemView {
             counter++;
         }
 
-        // Convert messages to markdown
-        let markdown = `# ${this.chatName || 'Chat History'}\n\n`;
-        markdown += `*${new Date().toLocaleString()}*\n\n`;
-        
-        for (const msg of this.messages) {
-            const icon = msg.role === 'assistant' ? '🔹' : '🟠';
-            const name = msg.role === 'assistant' ? 'Tessera' : 'You';
-            const lines = msg.content.split('\n').map(line => `> ${line}`).join('\n');
-            markdown += `${icon} **${name}**\n${lines}\n\n`;
-        }
+        const markdown = await this.generateConversationMarkdown();
 
         // Save the file
         try {
@@ -352,6 +353,8 @@ export class ConversationView extends ItemView {
                 overflow-y: auto;
                 margin-bottom: 0.5rem;
                 padding: 0.5rem;
+                padding-bottom: 1rem;
+                scroll-behavior: smooth;
             }
 
             .tessera-message-wrapper {
@@ -445,6 +448,8 @@ export class ConversationView extends ItemView {
             }
 
             .tessera-input-container {
+                position: relative;
+                z-index: 2;
                 display: flex;
                 gap: 0.5rem;
                 padding: 0.8rem;
@@ -588,5 +593,52 @@ export class ConversationView extends ItemView {
             }
         `;
         document.head.append(style);
+    }
+
+    // Add new method to generate markdown content
+    private async generateConversationMarkdown(): Promise<string> {
+        // Generate chat name if needed
+        if (!this.chatName && this.messages.length > 0) {
+            const firstUserMessage = this.messages.find(m => m.role === 'user')?.content;
+            if (firstUserMessage) {
+                try {
+                    const response = await this.plugin.generateChatName(firstUserMessage);
+                    this.chatName = response.replace(/[<>:"/\\|?*]/g, '-').trim();
+                } catch (error) {
+                    console.error('Failed to generate chat name:', error);
+                    this.chatName = 'Untitled Chat';
+                }
+            }
+        }
+
+        let markdown = `# ${this.chatName || 'Chat History'}\n\n`;
+        markdown += `*${new Date().toLocaleString()}*\n\n`;
+        
+        for (const msg of this.messages) {
+            const icon = msg.role === 'assistant' ? '🔹' : '🟠';
+            const name = msg.role === 'assistant' ? 'Tessera' : 'You';
+            const lines = msg.content.split('\n').map(line => `> ${line}`).join('\n');
+            markdown += `${icon} **${name}**\n${lines}\n\n`;
+        }
+
+        return markdown;
+    }
+
+    // Add new method to copy conversation
+    private async copyConversation() {
+        if (this.messages.length === 0) {
+            new Notice('No messages to copy');
+            return;
+        }
+
+        const markdown = await this.generateConversationMarkdown();
+        
+        try {
+            await navigator.clipboard.writeText(markdown);
+            new Notice('Conversation copied to clipboard');
+        } catch (error) {
+            console.error('Failed to copy conversation:', error);
+            new Notice('Failed to copy conversation');
+        }
     }
 } 
