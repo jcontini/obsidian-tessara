@@ -1,5 +1,6 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, TFile, TAbstractFile } from 'obsidian';
 import TesseraPlugin from '../main';
+import { RetryButton } from '../components/RetryButton';
 
 interface ChatMessage {
     role: 'user' | 'assistant';
@@ -12,6 +13,7 @@ export class ConversationView extends ItemView {
     private messageContainer: HTMLElement;
     private inputContainer: HTMLElement;
     private chatName: string | null = null;
+    private lastFailedMessage: string | null = null;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -168,7 +170,7 @@ export class ConversationView extends ItemView {
         }
     }
 
-    private async sendMessage(content: string) {
+    async sendMessage(content: string) {
         if (!content.trim()) return;
 
         const userMessage: ChatMessage = {
@@ -211,12 +213,18 @@ export class ConversationView extends ItemView {
             await this.renderMessage(assistantMessage);
 
         } catch (error) {
-            console.error('Failed to get response:', error);
+            console.error('Failed to get AI response:', error);
             loadingEl.parentElement?.remove();
+            this.lastFailedMessage = content;
             
-            const errorWrapper = this.messageContainer.createDiv('tessera-message-wrapper assistant');
-            errorWrapper.createDiv('tessera-message error')
-                .setText('Failed to get response from Claude');
+            const errorMessage: ChatMessage = {
+                role: 'assistant',
+                content: 'Failed to get response from AI',
+                timestamp: Date.now()
+            };
+            
+            this.messages.push(errorMessage);
+            await this.renderMessage(errorMessage);
         }
     }
 
@@ -654,5 +662,35 @@ export class ConversationView extends ItemView {
             console.error('Failed to copy conversation:', error);
             new Notice('Failed to copy conversation');
         }
+    }
+
+    private async createMessageElement(message: { role: string, content: string }, container: HTMLElement) {
+        const messageEl = container.createDiv({
+            cls: `message ${message.role === 'user' ? 'user-message' : 'ai-message'}`
+        });
+
+        const contentEl = messageEl.createDiv({ cls: 'message-content' });
+        contentEl.createSpan({ text: message.content });
+
+        if (message.content === 'Failed to get response from AI') {
+            const retryContainer = messageEl.createDiv({ cls: 'retry-container' });
+            new RetryButton(retryContainer, async () => {
+                if (this.lastFailedMessage) {
+                    messageEl.remove();
+                    await this.sendMessage(this.lastFailedMessage);
+                    this.lastFailedMessage = null;
+                }
+            });
+        }
+    }
+
+    private async appendMessage(message: Partial<ChatMessage>) {
+        const fullMessage: ChatMessage = {
+            ...message,
+            timestamp: Date.now()
+        } as ChatMessage;
+        
+        this.messages.push(fullMessage);
+        await this.renderMessage(fullMessage);
     }
 } 
