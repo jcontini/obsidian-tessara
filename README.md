@@ -1,6 +1,6 @@
 # Tessera
 
-> A trusted interface for AI-enhanced personal development and knowledge management in Obsidian.
+> An interface for AI-enhanced personal development and knowledge management in Obsidian.
 
 ## Overview
 Tessera is an Obsidian plugin that creates a safe, collaborative space for personal and professional development with AI assistance. Named after the individual pieces that form a mosaic, Tessera helps you build a comprehensive understanding of yourself and your goals through thoughtful AI collaboration.

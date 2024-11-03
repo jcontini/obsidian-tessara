@@ -1,7 +1,7 @@
 {
   "name": "obsidian-tessera",
   "version": "0.1.0",
-  "description": "A trusted interface for AI-enhanced personal development and knowledge management",
+  "description": "An interface for AI-enhanced personal development and knowledge management",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs & node scripts/dev.js",
