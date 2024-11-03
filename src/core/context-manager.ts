@@ -2,7 +2,7 @@ import { TFile, Notice } from 'obsidian';
 import TesseraPlugin from '../main';
 
 export class ContextManager {
-    private basePath = 'context';
+    private basePath = 'Context';
     private activeContextFiles: Set<string> = new Set();
 
     constructor(private plugin: TesseraPlugin) {}
@@ -13,11 +13,11 @@ export class ContextManager {
             await this.plugin.app.vault.createFolder(this.basePath);
         }
 
-        // Create empty user.md if it doesn't exist
-        const userPath = `${this.basePath}/user.md`;
-        if (!(await this.plugin.app.vault.adapter.exists(userPath))) {
-            await this.createContextFile('user.md', '');
-            this.activeContextFiles.add(userPath);
+        // Create empty Profile.md if it doesn't exist
+        const profilePath = `${this.basePath}/Profile.md`;
+        if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
+            await this.createContextFile('Profile.md', '');
+            this.activeContextFiles.add(profilePath);
         }
     }
 
@@ -59,8 +59,8 @@ export class ContextManager {
     }
 
     async appendToUserContext(content: string) {
-        const userPath = `${this.basePath}/user.md`;
-        const file = this.plugin.app.vault.getAbstractFileByPath(userPath);
+        const profilePath = `${this.basePath}/Profile.md`;
+        const file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
         
         if (file instanceof TFile) {
             const currentContent = await this.plugin.app.vault.read(file);

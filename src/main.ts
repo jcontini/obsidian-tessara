@@ -28,6 +28,7 @@ export default class TesseraPlugin extends Plugin {
     private anthropic: Anthropic;
     settings: TesseraSettings;
     contextManager: ContextManager;
+    private conversationHistory: Array<{ role: 'user' | 'assistant', content: string }> = [];
 
     async onload() {
         this.contextManager = new ContextManager(this);
@@ -132,49 +133,76 @@ export default class TesseraPlugin extends Plugin {
         
         const contextContent = await this.contextManager.getContextContent();
         
-        const systemPrompt = `
-
-        You are focused on helping users while maintaining context about them. You are friendly, but primarily professional, succinct, and respectful. You may have many questions for the user, but you ask them just 1-2 at a time. When asking the user questions, keep your message short. If your message is more than 3 sentences, use newlines to make it easier for the user to read. Assume that they have a short attention span and that seeing a large paragraph for them is intimidating.
+        const systemPrompt = `You are a thoughtful AI assistant focused on helping users achieve their goals while maintaining helpful context about them.
 
 Current context about the user:
 ${contextContent}
 
-Your key responsibilities:
-1. Maintain and update user context
-   - Ask relevant questions to better understand the user
-   - Update the user.md file when you learn important information
-   - Before giving advice, ensure you have enough context
+Your approach:
+1. Stay focused on the user's current topic
+   - Don't switch topics unless the user does
+   - Ask only ONE follow-up question at a time
+   - Only gather context that's relevant to the current discussion
 
-2. Guide conversations thoughtfully
-   - Start with open-ended questions about what's on their mind
-   - Ask follow-up questions based on their responses
-   - Adapt your questions to the topic (e.g., technical topics need different context than personal ones)
-   - Use existing context to make responses more relevant
+2. Context gathering
+   - Ask natural follow-up questions that flow from the conversation
+   - Only ask ONE question at a time
+   - When you learn something important, say "I'll note that down..."
+   - Focus on understanding what matters for their current goal
 
-3. Context Management
-   - When you learn something important about the user, say "I'll update my understanding about you..."
-   - When you need more context, explain why you're asking certain questions
-   - If a topic deserves its own context file, suggest creating one
+3. Communication style
+   - Be concise and clear
+   - Use short paragraphs and lists when appropriate
+   - Stay professional but friendly
+   - Keep responses focused and relevant
 
 Special Commands:
-- When you learn something new about the user that should be saved, use: !update_context [content to add]
-- To create a new context file: !create_context [filename] [initial content]
+- When you learn something important: !update_context [content]
+- To create a new context file: !create_context [filename] [content]
 
-Remember: Your goal is to build and maintain a helpful understanding of the user while providing thoughtful guidance.`;
+For START_CONVERSATION:
+- Simply ask "What's on your mind?"
+- Let the user guide the direction
+- Don't ask about AI or previous experiences unless relevant
+
+Remember: Focus on what the user wants to discuss. Ask only ONE question at a time to maintain a natural conversation flow.`;
 
         // Handle initial message specially
-        const userMessage = {
-            role: 'user' as const,
-            content: content === "START_CONVERSATION" 
-                ? "Please start the conversation with a succinct: 'What's on your mind?'."
-                : content
-        };
+        if (content === "START_CONVERSATION") {
+            this.conversationHistory = [];
+            const userMessage = {
+                role: 'user' as const,
+                content: "Please start the conversation with a succinct: 'What's on your mind?'."
+            };
+            this.conversationHistory.push(userMessage);
+        } else {
+            // Add the new user message to history
+            this.conversationHistory.push({
+                role: 'user',
+                content: content
+            });
+        }
 
-        return await this.anthropic.messages.create({
+        const response = await this.anthropic.messages.create({
             model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
             max_tokens: 1024,
             system: systemPrompt,
-            messages: [userMessage]
+            messages: this.conversationHistory
         });
+
+        // Add assistant's response to history
+        if (response.content[0].type === 'text') {
+            this.conversationHistory.push({
+                role: 'assistant',
+                content: response.content[0].text
+            });
+        }
+
+        return response;
+    }
+
+    // Add method to clear conversation history
+    clearConversationHistory() {
+        this.conversationHistory = [];
     }
 } 

@@ -36,8 +36,21 @@ export class ConversationView extends ItemView {
         
         // Header with save button
         const header = chatContainer.createDiv('tessera-chat-header');
-        const saveButton = header.createEl('button', {
-            cls: 'tessera-save-button',
+
+        const headerButtons = header.createDiv('tessera-header-buttons');
+
+        const newChatButton = headerButtons.createEl('button', {
+            cls: 'tessera-header-button',
+            attr: {
+                'aria-label': 'New chat'
+            }
+        });
+        newChatButton.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M12 5v14M5 12h14"/>
+        </svg>`;
+
+        const saveButton = headerButtons.createEl('button', {
+            cls: 'tessera-header-button',
             attr: {
                 'aria-label': 'Save conversation'
             }
@@ -85,6 +98,13 @@ export class ConversationView extends ItemView {
         sendButton.addEventListener('click', () => {
             this.sendMessage(textarea.value);
             textarea.value = '';
+        });
+
+        newChatButton.addEventListener('click', async () => {
+            if (this.messages.length > 0) {
+                await this.saveConversation();
+            }
+            this.startNewChat();
         });
 
         // Add styles
@@ -238,15 +258,15 @@ export class ConversationView extends ItemView {
             return;
         }
 
-        // Create chats folder if it doesn't exist
-        const chatsPath = 'chats';
+        // Create Saved Chats folder if it doesn't exist
+        const chatsPath = 'Saved Chats';
         if (!(await this.app.vault.adapter.exists(chatsPath))) {
             await this.app.vault.createFolder(chatsPath);
         }
 
         // Generate filename with timestamp
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `${chatsPath}/chat-${timestamp}.md`;
+        const filename = `${chatsPath}/Chat-${timestamp}.md`;
 
         // Convert messages to markdown
         let markdown = '# Chat History\n\n';
@@ -276,6 +296,18 @@ export class ConversationView extends ItemView {
             console.error('Failed to save conversation:', error);
             new Notice('Failed to save conversation');
         }
+    }
+
+    private async startNewChat() {
+        // Clear existing messages
+        this.messages = [];
+        this.messageContainer.empty();
+        
+        // Clear conversation history in plugin
+        this.plugin.clearConversationHistory();
+        
+        // Show welcome message
+        await this.sendInitialMessage();
     }
 
     private addStyles() {
@@ -502,6 +534,29 @@ export class ConversationView extends ItemView {
             }
 
             .tessera-save-button:hover {
+                color: var(--text-normal);
+                background-color: var(--background-modifier-hover);
+            }
+
+            .tessera-header-buttons {
+                display: flex;
+                gap: 0.5rem;
+            }
+
+            .tessera-header-button {
+                background: none;
+                border: none;
+                padding: 0.5rem;
+                cursor: pointer;
+                color: var(--text-muted);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 4px;
+                transition: all 0.2s ease;
+            }
+
+            .tessera-header-button:hover {
                 color: var(--text-normal);
                 background-color: var(--background-modifier-hover);
             }
