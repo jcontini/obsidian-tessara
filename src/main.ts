@@ -138,12 +138,17 @@ export default class TesseraPlugin extends Plugin {
         // Add command to check context directory
         this.addCommand({
             id: 'check-context-dir',
-            name: 'Check Context Directory',
+            name: 'Check Profile Status',
             callback: async () => {
-                const exists = await this.app.vault.adapter.exists(this.contextManager.basePath);
-                const files = await this.app.vault.adapter.list(this.contextManager.basePath);
-                new Notice(`Context directory exists: ${exists}\nFiles: ${JSON.stringify(files, null, 2)}`);
-                console.log('Context directory contents:', files);
+                const exists = await this.app.vault.adapter.exists('Profile.md');
+                const file = this.app.vault.getAbstractFileByPath('Profile.md');
+                if (file instanceof TFile) {
+                    const content = await this.app.vault.read(file);
+                    new Notice(`Profile.md exists: ${exists}\nSize: ${content.length} chars`);
+                    console.log('Profile content:', content);
+                } else {
+                    new Notice('Profile.md not found or not accessible');
+                }
             }
         });
 
@@ -153,19 +158,12 @@ export default class TesseraPlugin extends Plugin {
             name: 'Debug: Show Context Status',
             callback: async () => {
                 try {
-                    const basePath = this.contextManager.basePath;
-                    const exists = await this.app.vault.adapter.exists(basePath);
-                    const profilePath = `${basePath}/Profile.md`;
+                    const profilePath = 'Profile.md';
+                    const exists = await this.app.vault.adapter.exists(profilePath);
                     const profileExists = await this.app.vault.adapter.exists(profilePath);
                     
-                    // Show initial status
                     new Notice(`Checking context status...`, 2000);
-                    
-                    // Show directory status
-                    new Notice(`Context Directory (${basePath}): ${exists ? '✅' : '❌'}`, 3000);
-                    
-                    // Show profile status
-                    new Notice(`Profile.md: ${profileExists ? '✅' : '❌'}`, 3000);
+                    new Notice(`Profile.md: ${exists ? '✅' : '❌'}`, 3000);
                     
                     if (profileExists) {
                         const file = this.app.vault.getAbstractFileByPath(profilePath);
@@ -176,11 +174,8 @@ export default class TesseraPlugin extends Plugin {
                         }
                     }
                     
-                    // Log to console for additional debugging
                     console.log('Debug Status:', {
-                        contextDirExists: exists,
-                        profileExists: profileExists,
-                        basePath,
+                        profileExists: exists,
                         profilePath
                     });
                     
@@ -302,7 +297,6 @@ export default class TesseraPlugin extends Plugin {
             await this.contextManager.logToFile('=== New Message ===', 'INFO');
             await this.contextManager.logToFile('User message', 'INFO', content);
             
-            // Log conversation history
             if (this.conversationHistory.length > 0) {
                 await this.contextManager.logToFile('Conversation history:', 'DEBUG', 
                     this.conversationHistory.map(msg => 
@@ -312,47 +306,9 @@ export default class TesseraPlugin extends Plugin {
             }
             
             const contextContent = await this.contextManager.getContextContent();
-            
-            // Only log context length and active files if they exist
             if (contextContent.trim()) {
                 await this.contextManager.logToFile(`Context length: ${contextContent.length} chars`, 'DEBUG');
             }
-
-            const systemPrompt = this.getSystemPrompt(contextContent);
-            const tools: ContextTool[] = [
-                {
-                    name: "update_context",
-                    description: "IMMEDIATELY update user profile when ANY personal information is shared",
-                    input_schema: {
-                        type: "object",
-                        properties: {
-                            content: {
-                                type: "string",
-                                description: "Format as 'key: value' pairs, one per line"
-                            }
-                        },
-                        required: ["content"]
-                    }
-                },
-                {
-                    name: "create_context_file",
-                    description: "Create a new context file for organizing specific types of information",
-                    input_schema: {
-                        type: "object",
-                        properties: {
-                            filename: {
-                                type: "string",
-                                description: "Name of the file (will append .md if needed)"
-                            },
-                            content: {
-                                type: "string",
-                                description: "Initial content for the file"
-                            }
-                        },
-                        required: ["filename", "content"]
-                    }
-                }
-            ];
 
             // Handle initial message specially
             if (content === "START_CONVERSATION") {
@@ -370,60 +326,31 @@ export default class TesseraPlugin extends Plugin {
                 });
             }
 
-            // Log minimal API request info
             await this.contextManager.logToFile('Sending request to Claude API...', 'INFO');
             
             const response = await this.anthropic.messages.create({
                 model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
                 max_tokens: 1024,
-                system: systemPrompt,
+                system: this.getSystemPrompt(contextContent),
                 messages: this.conversationHistory,
-                tools: tools
+                tools: this.getTools()
             });
 
             await this.contextManager.logToFile('Received response from Claude API', 'INFO');
 
-            // Log response based on type
-            if (response.content[0].type === 'text') {
-                await this.contextManager.logToFile('AI response', 'INFO', response.content[0].text);
-            } else if (response.content[0].type === 'tool_use') {
-                await this.contextManager.logToFile('AI using tool', 'INFO', `${response.content[0].name}`);
-                await this.contextManager.logToFile('Tool input', 'DEBUG', JSON.stringify(response.content[0].input, null, 2));
-            }
-
             // Handle tool use if present
             if (response.content[0].type === 'tool_use') {
-                const toolUse = response.content[0] as ToolUse;
+                const toolUse = response.content[0];
+                await this.contextManager.logToFile('AI using tool', 'INFO', toolUse.name);
+                await this.contextManager.logToFile('Tool input', 'DEBUG', JSON.stringify(toolUse.input, null, 2));
+
                 try {
-                    let result: string;
-                    let contextUpdate: ContextUpdate | null = null;
-
-                    if (toolUse.name === 'update_context') {
-                        await this.contextManager.logToFile('Updating context...', 'INFO');
-                        await this.contextManager.appendToUserContext(toolUse.input.content);
-                        result = "Context updated successfully";
-                        await this.contextManager.logToFile('Context updated', 'INFO');
-                    } else if (toolUse.name === 'create_context_file') {
-                        await this.contextManager.logToFile(`Creating new context file: ${toolUse.input.filename}`, 'INFO');
-                        const filename = toolUse.input.filename || 'untitled.md';
-                        const path = await this.contextManager.createNewContextFile(
-                            filename,
-                            toolUse.input.content
-                        );
-                        result = `Created new context file: ${path}`;
-                        contextUpdate = {
-                            filename: filename.endsWith('.md') ? filename : `${filename}.md`,
-                            path: path
-                        };
-                    } else {
-                        result = "Unknown tool";
-                    }
-
-                    return await this.sendToolResult(toolUse, result);
-
+                    await this.handleToolUse(toolUse);
+                    // After tool use, get a follow-up response without the profile content
+                    return await this.getFollowUpResponse(content, model);
                 } catch (error) {
                     await this.contextManager.logToFile(`Tool error: ${error.message}`, 'ERROR');
-                    return await this.sendToolResult(toolUse, error.message, true);
+                    throw error;
                 }
             }
 
@@ -440,6 +367,93 @@ export default class TesseraPlugin extends Plugin {
             await this.contextManager.logToFile(`Error: ${error.message}`, 'ERROR');
             throw error;
         }
+    }
+
+    private async handleToolUse(toolUse: any) {
+        if (toolUse.name === 'update_context') {
+            await this.contextManager.logToFile('Updating context...', 'INFO');
+            await this.contextManager.appendToUserContext(toolUse.input.content);
+            await this.contextManager.logToFile('Context updated', 'INFO');
+        } else if (toolUse.name === 'create_context_file') {
+            await this.contextManager.logToFile(`Creating new context file: ${toolUse.input.filename}`, 'INFO');
+            const path = await this.contextManager.createNewContextFile(
+                toolUse.input.filename,
+                toolUse.input.content
+            );
+            await this.contextManager.logToFile(`Created file: ${path}`, 'INFO');
+        }
+    }
+
+    private async getFollowUpResponse(originalContent: string, model?: string) {
+        // Get a follow-up response that focuses on interaction rather than profile content
+        return await this.anthropic.messages.create({
+            model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
+            max_tokens: 1024,
+            system: "You are responding after updating the user's profile. Focus on engaging with their message naturally, without repeating or referencing the profile content. Keep the conversation flowing.",
+            messages: [{
+                role: 'user',
+                content: originalContent
+            }]
+        });
+    }
+
+    private getTools(): any[] {
+        return [
+            {
+                name: "update_context",
+                description: `Update the user's profile with ONLY explicitly shared personal information.
+
+CRITICAL RULES:
+- NEVER infer, assume, or generate information not directly stated by the user
+- NEVER create fictional quotes
+- NEVER add hobbies, interests, or background details unless explicitly shared
+- NEVER embellish or expand upon basic facts
+- If unsure whether something was explicitly stated, DO NOT include it
+
+Format the profile as a clear, factual markdown document that:
+- Includes ONLY information directly provided by the user
+- Uses simple, clear statements without embellishment
+- Organizes verified information using:
+  * Level 1 (#) heading for the profile title
+  * Level 2 (##) headings for main sections
+  * Bullet points for discrete facts
+  * Tables for structured information when relevant
+- Updates existing sections by:
+  * Keeping confirmed information
+  * Removing any previously hallucinated content
+  * Adding new verified information
+- Maintains strict factual accuracy
+`,
+                input_schema: {
+                    type: "object",
+                    properties: {
+                        content: {
+                            type: "string",
+                            description: "The verified, factual markdown content for the profile - NO assumptions or inferences"
+                        }
+                    },
+                    required: ["content"]
+                }
+            },
+            {
+                name: "create_context_file",
+                description: "Create a new context file for organizing specific types of information. Use proper markdown formatting and structure.",
+                input_schema: {
+                    type: "object",
+                    properties: {
+                        filename: {
+                            type: "string",
+                            description: "Name of the file (will append .md if needed)"
+                        },
+                        content: {
+                            type: "string",
+                            description: "Initial content for the file, formatted in markdown"
+                        }
+                    },
+                    required: ["filename", "content"]
+                }
+            }
+        ];
     }
 
     // Add method to clear conversation history
@@ -551,7 +565,7 @@ Current context about the user:
 ${contextContent}
 
 CRITICAL INSTRUCTION: You MUST use tools BEFORE sending ANY text response when:
-1. User shares ANY personal information (name, location, preferences, etc.)
+1. User shares MEANINGFUL personal information (name, location, preferences, etc.)
 2. You need to create a new context file for organizing specific types of information
 
 Tool Usage Rules:
@@ -564,31 +578,8 @@ Response Guidelines:
 1. ONLY say "What's on your mind?" for START_CONVERSATION messages
 2. For all other messages:
    - Respond naturally to the user's content
-   - Don't start responses with "What's on your mind?"
    - Focus on the current topic
    - Ask relevant follow-up questions when appropriate
-
-Example Interactions:
-1. START_CONVERSATION:
-   Assistant: "What's on your mind?"
-
-2. Personal Info Shared:
-   User: "My name is Joe and I live in Austin"
-   Assistant: [Use update_context tool FIRST]
-   Then respond: "Nice to meet you, Joe! How can I help you today?"
-
-Available Tools:
-- update_context: Use FIRST when ANY personal info is shared
-- create_context_file: Use ONLY when organizing specific types of information (NOT for conversations)
-
-Special Cases:
-- For START_CONVERSATION: ONLY respond with "What's on your mind?" - no tool use needed
-- Never create files for general conversation history
-- Only create context files when explicitly organizing specific information types
-
-Remember: 
-1. Tools BEFORE text when personal info is shared
-2. "What's on your mind?" ONLY for START_CONVERSATION
-3. Natural, focused responses for everything else`;
+   - NEVER repeat or reference profile content in your responses`;
     }
 } 
