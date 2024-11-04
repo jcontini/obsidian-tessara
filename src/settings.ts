@@ -139,5 +139,16 @@ export class TesseraSettingTab extends PluginSettingTab {
                         }
                     });
             });
+
+        new Setting(containerEl)
+            .setName('Project Debug Path')
+            .setDesc('Path to save debug logs in your project directory (e.g., debug/debug.md)')
+            .addText(text => text
+                .setPlaceholder('debug/debug.md')
+                .setValue(this.plugin.settings.projectDebugPath || '')
+                .onChange(async (value) => {
+                    this.plugin.settings.projectDebugPath = value;
+                    await this.plugin.saveSettings();
+                }));
     }
 } 

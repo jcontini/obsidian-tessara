@@ -1,5 +1,7 @@
 import { TFile, Notice } from 'obsidian';
 import TesseraPlugin from '../main';
+import { join } from 'path';
+import { existsSync, mkdirSync, appendFileSync } from 'fs';
 
 export class ContextManager {
     public basePath = 'Context';
@@ -9,16 +11,23 @@ export class ContextManager {
     constructor(private plugin: TesseraPlugin) {}
 
     async initialize() {
-        // Ensure base directory exists
-        if (!(await this.plugin.app.vault.adapter.exists(this.basePath))) {
-            await this.plugin.app.vault.createFolder(this.basePath);
-        }
+        try {
+            // Ensure base directory exists
+            if (!(await this.plugin.app.vault.adapter.exists(this.basePath))) {
+                await this.plugin.app.vault.createFolder(this.basePath);
+            }
 
-        // Create empty Profile.md if it doesn't exist
-        const profilePath = `${this.basePath}/Profile.md`;
-        if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
-            await this.createContextFile('Profile.md', '');
-            this.activeContextFiles.add(profilePath);
+            // Create Profile.md with initial structure if it doesn't exist
+            const profilePath = `${this.basePath}/Profile.md`;
+            if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
+                const initialContent = `# User Profile\n\nThis file contains information about the user.\n\n## Updates\n`;
+                await this.plugin.app.vault.create(profilePath, initialContent);
+                this.activeContextFiles.add(profilePath);
+                await this.logToFile('Created new Profile.md with initial structure');
+            }
+        } catch (error) {
+            await this.logToFile(`Failed to initialize context: ${error.message}`, 'ERROR');
+            throw error;
         }
     }
 
@@ -64,36 +73,44 @@ export class ContextManager {
         const logEntry = `[${timestamp}] [${level}] ${message}\n`;
         
         try {
-            // Change to .md extension and add markdown formatting
-            const logPath = 'debug.md';
+            // Log to vault
+            const vaultLogPath = 'debug.md';
             let existingContent = '';
             
-            // Check if file exists in vault root
-            const existingFile = this.plugin.app.vault.getAbstractFileByPath(logPath);
+            const existingFile = this.plugin.app.vault.getAbstractFileByPath(vaultLogPath);
             
             if (existingFile instanceof TFile) {
                 existingContent = await this.plugin.app.vault.read(existingFile);
-                
-                // Append new log entry
                 const updatedContent = existingContent + logEntry;
-                
-                // Keep only last 1000 lines
                 const lines = updatedContent.split('\n');
                 const trimmedContent = lines.slice(-1000).join('\n');
-                
-                // Add markdown formatting if it's a new file
                 const formattedContent = trimmedContent.startsWith('# Debug Log') 
                     ? trimmedContent 
                     : `# Debug Log\n\n\`\`\`log\n${trimmedContent}\n\`\`\``;
                 
-                // Modify existing file
                 await this.plugin.app.vault.modify(existingFile, formattedContent);
             } else {
-                // Create new file with markdown formatting
                 const initialContent = `# Debug Log\n\n\`\`\`log\n${logEntry}\n\`\`\``;
-                await this.plugin.app.vault.create(logPath, initialContent);
+                await this.plugin.app.vault.create(vaultLogPath, initialContent);
             }
-            
+
+            // Log to project directory if path is configured
+            if (this.plugin.settings.projectDebugPath) {
+                try {
+                    const projectPath = this.plugin.settings.projectDebugPath;
+                    const dirPath = projectPath.split('/').slice(0, -1).join('/');
+                    
+                    // Create directory if it doesn't exist
+                    if (!existsSync(dirPath)) {
+                        mkdirSync(dirPath, { recursive: true });
+                    }
+                    
+                    // Append to file
+                    appendFileSync(projectPath, logEntry);
+                } catch (error) {
+                    console.error('Failed to write to project debug file:', error);
+                }
+            }
         } catch (error) {
             console.error('Failed to write to debug log:', error);
         }
@@ -105,40 +122,32 @@ export class ContextManager {
         try {
             await this.logToFile(`Attempting to update profile at: ${profilePath}`);
             
+            // Ensure Context directory exists
             if (!(await this.plugin.app.vault.adapter.exists(this.basePath))) {
                 await this.logToFile('Creating Context directory...');
                 await this.plugin.app.vault.createFolder(this.basePath);
             }
             
-            if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
-                await this.logToFile('Creating Profile.md...');
-                await this.plugin.app.vault.create(profilePath, '');
+            // Get or create Profile.md
+            let file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
+            if (!file) {
+                await this.logToFile('Profile.md not found, creating new file...');
+                const initialContent = `# User Profile\n\nThis file contains information about the user.\n\n## Updates\n`;
+                file = await this.plugin.app.vault.create(profilePath, initialContent);
             }
-            
-            const file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
-            await this.logToFile(`Found profile file: ${file ? 'yes' : 'no'}`);
             
             if (file instanceof TFile) {
                 const currentContent = await this.plugin.app.vault.read(file);
-                await this.logToFile(`Current content length: ${currentContent?.length || 0}`);
-                
                 const timestamp = new Date().toLocaleString();
-                const updatedContent = currentContent 
-                    ? `${currentContent}\n\n## Update ${timestamp}\n${content}` 
-                    : `## Update ${timestamp}\n${content}`;
+                const updatedContent = currentContent.trim() + `\n\n### Update ${timestamp}\n${content}`;
                 
                 await this.plugin.app.vault.modify(file, updatedContent);
                 await this.logToFile('Content updated successfully');
                 new Notice('✅ Profile updated successfully');
                 
-                const newContent = await this.plugin.app.vault.read(file);
-                await this.logToFile(`New content length: ${newContent.length}`);
-                
                 this.activeContextFiles.add(profilePath);
             } else {
-                const error = 'Failed to access Profile.md';
-                await this.logToFile(error, 'ERROR');
-                throw new Error(error);
+                throw new Error('Failed to access Profile.md as a file');
             }
         } catch (error) {
             await this.logToFile(`Error in appendToUserContext: ${error.message}`, 'ERROR');

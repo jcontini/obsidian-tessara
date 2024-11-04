@@ -11,6 +11,7 @@ interface TesseraSettings {
     modelType: ModelType;
     customModel?: string;
     selectedModel?: string;
+    projectDebugPath?: string;
 }
 
 type Provider = 'anthropic';
@@ -60,7 +61,8 @@ const DEFAULT_SETTINGS: TesseraSettings = {
     apiKey: '',
     modelType: 'default',
     selectedModel: 'claude-3-sonnet-20240229',
-    customModel: ''
+    customModel: '',
+    projectDebugPath: 'debug/debug.md'
 };
 
 export default class TesseraPlugin extends Plugin {
