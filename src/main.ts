@@ -401,35 +401,48 @@ export default class TesseraPlugin extends Plugin {
         return [
             {
                 name: "update_context",
-                description: `Update the user's profile with ONLY explicitly shared personal information.
+                description: `Update the user's profile as a biographical narrative, using ONLY explicitly shared personal information.
 
 CRITICAL RULES:
 - NEVER infer, assume, or generate information not directly stated by the user
-- NEVER create fictional quotes
-- NEVER add hobbies, interests, or background details unless explicitly shared
-- NEVER embellish or expand upon basic facts
+- NEVER create fictional quotes or embellish facts
+- NEVER add details unless explicitly shared
 - If unsure whether something was explicitly stated, DO NOT include it
+- Maintain strict factual accuracy while telling their story
 
-Format the profile as a clear, factual markdown document that:
-- Includes ONLY information directly provided by the user
-- Uses simple, clear statements without embellishment
-- Organizes verified information using:
-  * Level 1 (#) heading for the profile title
-  * Level 2 (##) headings for main sections
-  * Bullet points for discrete facts
-  * Tables for structured information when relevant
-- Updates existing sections by:
-  * Keeping confirmed information
+NARRATIVE APPROACH:
+- Listen for themes and patterns in how the person describes themselves
+- Let their own words and metaphors guide the organization
+- Create section headings that reflect their unique way of seeing themselves
+- Use their own imagery and concepts when organizing information
+- Allow their personal narrative to emerge naturally
+- Group related thoughts and feelings as they present them
+
+ORGANIZATION GUIDELINES:
+- Start with a brief personal overview if enough context exists
+- Create sections based on recurring themes in their self-expression
+- Let the structure flow from their story rather than imposing categories
+- Use their own metaphors and language for section titles when possible
+- Maintain clean structure:
+  * Level 1 (#) for profile title
+  * Level 2 (##) for thematic sections that emerge from their narrative
+  * Bullet points for specific details within themes
+
+FORMAT REQUIREMENTS:
+- Write in clear, biographical statements that preserve their voice
+- Group information around themes they naturally express
+- Use bullet points for specific details within each theme
+- Update existing content by:
+  * Preserving confirmed information
   * Removing any previously hallucinated content
-  * Adding new verified information
-- Maintains strict factual accuracy
-`,
+  * Integrating new information while maintaining their narrative voice
+- Keep focus on their unique way of describing their experience`,
                 input_schema: {
                     type: "object",
                     properties: {
                         content: {
                             type: "string",
-                            description: "The verified, factual markdown content for the profile - NO assumptions or inferences"
+                            description: "The verified, factual biographical content for the profile - NO assumptions or inferences"
                         }
                     },
                     required: ["content"]
@@ -577,9 +590,14 @@ Tool Usage Rules:
 Response Guidelines:
 1. ONLY say "What's on your mind?" for START_CONVERSATION messages
 2. For all other messages:
-   - Respond naturally to the user's content
-   - Focus on the current topic
+   - Respond naturally and conversationally
+   - When asked about what you know, provide a natural summary rather than listing facts
+   - Focus on the most relevant aspects based on the current conversation
+   - Synthesize information rather than repeating it verbatim
+   - Use a friendly, conversational tone
+   - NEVER repeat profile content verbatim
    - Ask relevant follow-up questions when appropriate
-   - NEVER repeat or reference profile content in your responses`;
+   - If asked about specific aspects, focus only on those aspects
+   - Maintain a natural flow of conversation`;
     }
 } 
