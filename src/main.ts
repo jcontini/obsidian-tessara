@@ -56,6 +56,29 @@ interface ContextUpdate {
     path: string;
 }
 
+interface ToolUse {
+    type: 'tool_use';
+    id: string;
+    name: 'update_context' | 'create_context_file';
+    input: {
+        content: string;
+        filename?: string;
+    };
+}
+
+interface ToolResult {
+    type: 'tool_result';
+    tool_use_id: string;
+    content: string;
+    is_error?: boolean;
+}
+
+interface MessageContent {
+    type: 'text' | 'tool_use';
+    text?: string;
+    tool_use?: ToolUse;
+}
+
 const DEFAULT_SETTINGS: TesseraSettings = {
     provider: 'anthropic',
     apiKey: '',
@@ -72,10 +95,10 @@ export default class TesseraPlugin extends Plugin {
     private conversationHistory: Array<{ role: 'user' | 'assistant', content: string }> = [];
 
     async onload() {
+        await this.loadSettings();
+        
         this.contextManager = new ContextManager(this);
         await this.contextManager.initialize();
-        
-        await this.loadSettings();
         
         if (this.settings.apiKey) {
             this.initializeClaudeClient(this.settings.apiKey);
@@ -277,60 +300,35 @@ export default class TesseraPlugin extends Plugin {
 
         try {
             await this.contextManager.logToFile('=== New Message ===', 'INFO');
-            await this.contextManager.logToFile(`User message: ${content}`, 'INFO');
+            await this.contextManager.logToFile('User message', 'INFO', content);
+            
+            // Log conversation history
+            if (this.conversationHistory.length > 0) {
+                await this.contextManager.logToFile('Conversation history:', 'DEBUG', 
+                    this.conversationHistory.map(msg => 
+                        `${msg.role.toUpperCase()}: ${msg.content}`
+                    ).join('\n')
+                );
+            }
             
             const contextContent = await this.contextManager.getContextContent();
-            await this.contextManager.logToFile(`Current context length: ${contextContent.length} chars`, 'DEBUG');
-
-            // Log the system prompt being used
-            await this.contextManager.logToFile('Preparing system prompt and tools...', 'DEBUG');
             
-            const systemPrompt = `You are a thoughtful AI assistant focused on helping users achieve their goals while maintaining helpful context about them.
+            // Only log context length and active files if they exist
+            if (contextContent.trim()) {
+                await this.contextManager.logToFile(`Context length: ${contextContent.length} chars`, 'DEBUG');
+            }
 
-Current context about the user:
-${contextContent}
-
-Your approach:
-1. Stay focused on the user's current topic
-   - Don't switch topics unless the user does
-   - Ask only ONE follow-up question at a time
-   - Only gather context that's relevant to the current discussion
-
-2. Context gathering
-   - Ask natural follow-up questions that flow from the conversation
-   - Only ask ONE question at a time
-   - When you learn something important about the user, use the update_context tool
-   - Focus on understanding what matters for their current goal
-
-3. Communication style
-   - Be concise and clear
-   - Use short paragraphs and lists when appropriate
-   - Stay professional but friendly
-   - Keep responses focused and relevant
-
-Available Tools:
-- update_context: Use this when you learn important information about the user
-- create_context_file: Use this to create new context files for organizing information
-
-For START_CONVERSATION:
-- Simply ask "What's on your mind?"
-- Let the user guide the direction
-- Don't ask about AI or previous experiences unless relevant
-
-Remember: Focus on what the user wants to discuss. Ask only ONE question at a time to maintain a natural conversation flow.`;
-
-            await this.contextManager.logToFile('Configuring tools...', 'DEBUG');
-            
+            const systemPrompt = this.getSystemPrompt(contextContent);
             const tools: ContextTool[] = [
                 {
                     name: "update_context",
-                    description: "Append new information about the user to their profile",
+                    description: "IMMEDIATELY update user profile when ANY personal information is shared",
                     input_schema: {
                         type: "object",
                         properties: {
                             content: {
                                 type: "string",
-                                description: "The information to append to the user's profile"
+                                description: "Format as 'key: value' pairs, one per line"
                             }
                         },
                         required: ["content"]
@@ -338,13 +336,13 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
                 },
                 {
                     name: "create_context_file",
-                    description: "Create a new markdown file in the Context folder to store specific information. Use this for organizing different types of context into separate files.",
+                    description: "Create a new context file for organizing specific types of information",
                     input_schema: {
                         type: "object",
                         properties: {
                             filename: {
                                 type: "string",
-                                description: "Name of the file to create (will append .md if not included)"
+                                description: "Name of the file (will append .md if needed)"
                             },
                             content: {
                                 type: "string",
@@ -355,9 +353,6 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
                     }
                 }
             ];
-
-            // Log conversation state
-            await this.contextManager.logToFile(`Conversation history length: ${this.conversationHistory.length} messages`, 'DEBUG');
 
             // Handle initial message specially
             if (content === "START_CONVERSATION") {
@@ -375,8 +370,9 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
                 });
             }
 
-            // Log API request
+            // Log minimal API request info
             await this.contextManager.logToFile('Sending request to Claude API...', 'INFO');
+            
             const response = await this.anthropic.messages.create({
                 model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
                 max_tokens: 1024,
@@ -384,131 +380,64 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
                 messages: this.conversationHistory,
                 tools: tools
             });
+
             await this.contextManager.logToFile('Received response from Claude API', 'INFO');
 
-            // Log response type
-            await this.contextManager.logToFile(`Response type: ${response.content[0].type}`, 'INFO');
+            // Log response based on type
+            if (response.content[0].type === 'text') {
+                await this.contextManager.logToFile('AI response', 'INFO', response.content[0].text);
+            } else if (response.content[0].type === 'tool_use') {
+                await this.contextManager.logToFile('AI using tool', 'INFO', `${response.content[0].name}`);
+                await this.contextManager.logToFile('Tool input', 'DEBUG', JSON.stringify(response.content[0].input, null, 2));
+            }
 
             // Handle tool use if present
             if (response.content[0].type === 'tool_use') {
-                const toolUse = response.content[0];
-                await this.contextManager.logToFile(`Tool use detected: ${toolUse.name}`, 'INFO');
-                await this.contextManager.logToFile(`Tool input: ${JSON.stringify(toolUse.input, null, 2)}`, 'DEBUG');
-
-                let result: string;
-                let contextUpdate: ContextUpdate | null = null;
-
+                const toolUse = response.content[0] as ToolUse;
                 try {
-                    const toolInput = toolUse.input as ToolInput;
-                    
+                    let result: string;
+                    let contextUpdate: ContextUpdate | null = null;
+
                     if (toolUse.name === 'update_context') {
-                        await this.contextManager.logToFile('Attempting context update...', 'INFO');
-                        new Notice('🔄 Attempting to update context...', 2000);
-                        
-                        await this.contextManager.appendToUserContext(toolInput.content);
+                        await this.contextManager.logToFile('Updating context...', 'INFO');
+                        await this.contextManager.appendToUserContext(toolUse.input.content);
                         result = "Context updated successfully";
-                        contextUpdate = {
-                            filename: 'Profile.md',
-                            path: 'Context/Profile.md'
-                        };
-                        
-                        await this.contextManager.logToFile('Context update successful', 'INFO');
-                        new Notice('✅ Context updated successfully', 2000);
+                        await this.contextManager.logToFile('Context updated', 'INFO');
                     } else if (toolUse.name === 'create_context_file') {
-                        await this.contextManager.logToFile(`Creating new context file: ${toolInput.filename}`, 'INFO');
+                        await this.contextManager.logToFile(`Creating new context file: ${toolUse.input.filename}`, 'INFO');
+                        const filename = toolUse.input.filename || 'untitled.md';
                         const path = await this.contextManager.createNewContextFile(
-                            toolInput.filename!,
-                            toolInput.content
+                            filename,
+                            toolUse.input.content
                         );
                         result = `Created new context file: ${path}`;
                         contextUpdate = {
-                            filename: toolInput.filename! + (toolInput.filename!.endsWith('.md') ? '' : '.md'),
+                            filename: filename.endsWith('.md') ? filename : `${filename}.md`,
                             path: path
                         };
                     } else {
                         result = "Unknown tool";
                     }
 
-                    // Log tool result
-                    await this.contextManager.logToFile(`Tool result: ${result}`, 'INFO');
+                    return await this.sendToolResult(toolUse, result);
 
-                    // Send tool result back to Claude
-                    await this.contextManager.logToFile('Sending tool result back to Claude...', 'DEBUG');
-                    const toolResponse = await this.anthropic.messages.create({
-                        model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
-                        max_tokens: 1024,
-                        system: systemPrompt,
-                        messages: [
-                            ...this.conversationHistory,
-                            {
-                                role: 'assistant',
-                                content: [toolUse]
-                            },
-                            {
-                                role: 'user',
-                                content: [{
-                                    type: 'tool_result',
-                                    tool_use_id: toolUse.id,
-                                    content: result
-                                }]
-                            }
-                        ]
-                    });
-                    await this.contextManager.logToFile('Received tool response from Claude', 'DEBUG');
-
-                    // Add visual notification for context updates
-                    if (contextUpdate) {
-                        this.app.workspace.getLeavesOfType('tessera-chat').forEach(leaf => {
-                            const view = leaf.view as ConversationView;
-                            if (view?.showContextUpdateNotification && contextUpdate) {
-                                view.showContextUpdateNotification(contextUpdate);
-                                this.contextManager.logToFile('Showed context update notification', 'DEBUG');
-                            }
-                        });
-                    }
-
-                    return toolResponse;
                 } catch (error) {
-                    await this.contextManager.logToFile(`Tool execution failed: ${error.message}`, 'ERROR');
-                    new Notice('❌ Failed to update context: ' + error.message, 3000);
-                    // Handle tool execution error
-                    return this.anthropic.messages.create({
-                        model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
-                        max_tokens: 1024,
-                        messages: [
-                            ...this.conversationHistory,
-                            {
-                                role: 'assistant',
-                                content: [toolUse]
-                            },
-                            {
-                                role: 'user',
-                                content: [{
-                                    type: 'tool_result',
-                                    tool_use_id: toolUse.id,
-                                    content: error.message,
-                                    is_error: true
-                                }]
-                            }
-                        ]
-                    });
+                    await this.contextManager.logToFile(`Tool error: ${error.message}`, 'ERROR');
+                    return await this.sendToolResult(toolUse, error.message, true);
                 }
             }
 
             // Handle regular text response
             if (response.content[0].type === 'text') {
-                await this.contextManager.logToFile('Processing text response...', 'DEBUG');
                 this.conversationHistory.push({
                     role: 'assistant',
                     content: response.content[0].text
                 });
-                await this.contextManager.logToFile('Added response to conversation history', 'DEBUG');
             }
 
             return response;
         } catch (error) {
-            await this.contextManager.logToFile(`Message handling failed: ${error.message}`, 'ERROR');
-            new Notice('❌ Error handling message: ' + error.message, 3000);
+            await this.contextManager.logToFile(`Error: ${error.message}`, 'ERROR');
             throw error;
         }
     }
@@ -549,5 +478,117 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
                 source: debugLog.join('\n')
             }
         });
+    }
+
+    // Add this helper function at the class level
+    private async sendToolResult(toolUse: ToolUse, result: string, isError: boolean = false) {
+        const tools: ContextTool[] = [
+            {
+                name: "update_context",
+                description: "IMMEDIATELY update user profile when ANY personal information is shared",
+                input_schema: {
+                    type: "object",
+                    properties: {
+                        content: {
+                            type: "string",
+                            description: "Format as 'key: value' pairs, one per line"
+                        }
+                    },
+                    required: ["content"]
+                }
+            },
+            {
+                name: "create_context_file",
+                description: "Create a new context file for organizing specific types of information",
+                input_schema: {
+                    type: "object",
+                    properties: {
+                        filename: {
+                            type: "string",
+                            description: "Name of the file (will append .md if needed)"
+                        },
+                        content: {
+                            type: "string",
+                            description: "Initial content for the file"
+                        }
+                    },
+                    required: ["filename", "content"]
+                }
+            }
+        ];
+
+        await this.contextManager.logToFile('Sending tool result to Claude...', 'DEBUG');
+        
+        return this.anthropic.messages.create({
+            model: this.settings.selectedModel || 'claude-3-sonnet-20240229',
+            max_tokens: 1024,
+            system: this.getSystemPrompt(await this.contextManager.getContextContent()),
+            tools: tools,
+            messages: [
+                ...this.conversationHistory,
+                {
+                    role: 'assistant',
+                    content: [toolUse]
+                },
+                {
+                    role: 'user',
+                    content: [{
+                        type: 'tool_result',
+                        tool_use_id: toolUse.id,
+                        content: result,
+                        is_error: isError
+                    }]
+                }
+            ]
+        });
+    }
+
+    // Add this method to the TesseraPlugin class
+    private getSystemPrompt(contextContent: string): string {
+        return `You are a thoughtful AI assistant focused on helping users achieve their goals while maintaining helpful context about them.
+
+Current context about the user:
+${contextContent}
+
+CRITICAL INSTRUCTION: You MUST use tools BEFORE sending ANY text response when:
+1. User shares ANY personal information (name, location, preferences, etc.)
+2. You need to create a new context file for organizing specific types of information
+
+Tool Usage Rules:
+1. NEVER say "let me update" or "I will update" - just USE the tool immediately
+2. NEVER respond with text before using required tools
+3. After using a tool, wait for the tool result before continuing
+4. Do NOT create conversation files - conversations are handled automatically
+
+Response Guidelines:
+1. ONLY say "What's on your mind?" for START_CONVERSATION messages
+2. For all other messages:
+   - Respond naturally to the user's content
+   - Don't start responses with "What's on your mind?"
+   - Focus on the current topic
+   - Ask relevant follow-up questions when appropriate
+
+Example Interactions:
+1. START_CONVERSATION:
+   Assistant: "What's on your mind?"
+
+2. Personal Info Shared:
+   User: "My name is Joe and I live in Austin"
+   Assistant: [Use update_context tool FIRST]
+   Then respond: "Nice to meet you, Joe! How can I help you today?"
+
+Available Tools:
+- update_context: Use FIRST when ANY personal info is shared
+- create_context_file: Use ONLY when organizing specific types of information (NOT for conversations)
+
+Special Cases:
+- For START_CONVERSATION: ONLY respond with "What's on your mind?" - no tool use needed
+- Never create files for general conversation history
+- Only create context files when explicitly organizing specific information types
+
+Remember: 
+1. Tools BEFORE text when personal info is shared
+2. "What's on your mind?" ONLY for START_CONVERSATION
+3. Natural, focused responses for everything else`;
     }
 } 

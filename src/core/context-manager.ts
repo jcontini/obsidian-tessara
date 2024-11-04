@@ -12,19 +12,26 @@ export class ContextManager {
 
     async initialize() {
         try {
+            await this.logToFile('Initializing context manager...', 'INFO');
+            
             // Ensure base directory exists
             if (!(await this.plugin.app.vault.adapter.exists(this.basePath))) {
+                await this.logToFile(`Creating base directory: ${this.basePath}`, 'INFO');
                 await this.plugin.app.vault.createFolder(this.basePath);
             }
 
-            // Create Profile.md with initial structure if it doesn't exist
+            // Create empty Profile.md if it doesn't exist
             const profilePath = `${this.basePath}/Profile.md`;
             if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
-                const initialContent = `# User Profile\n\nThis file contains information about the user.\n\n## Updates\n`;
-                await this.plugin.app.vault.create(profilePath, initialContent);
+                await this.plugin.app.vault.create(profilePath, '');
                 this.activeContextFiles.add(profilePath);
-                await this.logToFile('Created new Profile.md with initial structure');
+                await this.logToFile(`Created new Profile.md at: ${profilePath}`, 'INFO');
+            } else {
+                this.activeContextFiles.add(profilePath);
+                await this.logToFile(`Added existing Profile.md to active files: ${profilePath}`, 'INFO');
             }
+
+            await this.logToFile(`Active context files after init: ${JSON.stringify(Array.from(this.activeContextFiles))}`, 'DEBUG');
         } catch (error) {
             await this.logToFile(`Failed to initialize context: ${error.message}`, 'ERROR');
             throw error;
@@ -68,34 +75,20 @@ export class ContextManager {
         this.activeContextFiles.clear();
     }
 
-    public async logToFile(message: string, level: 'INFO' | 'ERROR' | 'DEBUG' = 'INFO') {
+    public async logToFile(message: string, level: 'INFO' | 'ERROR' | 'DEBUG' = 'INFO', content?: string) {
         const timestamp = new Date().toLocaleString();
-        const logEntry = `[${timestamp}] [${level}] ${message}\n`;
+        let logEntry = `[${timestamp}] [${level}] ${message}`;
+        
+        // Add content details if provided
+        if (content) {
+            logEntry += `\nContent: "${content}"`;
+        }
+        
+        logEntry += '\n';
         
         try {
-            // Log to vault
-            const vaultLogPath = 'debug.md';
-            let existingContent = '';
-            
-            const existingFile = this.plugin.app.vault.getAbstractFileByPath(vaultLogPath);
-            
-            if (existingFile instanceof TFile) {
-                existingContent = await this.plugin.app.vault.read(existingFile);
-                const updatedContent = existingContent + logEntry;
-                const lines = updatedContent.split('\n');
-                const trimmedContent = lines.slice(-1000).join('\n');
-                const formattedContent = trimmedContent.startsWith('# Debug Log') 
-                    ? trimmedContent 
-                    : `# Debug Log\n\n\`\`\`log\n${trimmedContent}\n\`\`\``;
-                
-                await this.plugin.app.vault.modify(existingFile, formattedContent);
-            } else {
-                const initialContent = `# Debug Log\n\n\`\`\`log\n${logEntry}\n\`\`\``;
-                await this.plugin.app.vault.create(vaultLogPath, initialContent);
-            }
-
-            // Log to project directory if path is configured
-            if (this.plugin.settings.projectDebugPath) {
+            // Only log to project directory if path is configured
+            if (this.plugin.settings?.projectDebugPath) {
                 try {
                     const projectPath = this.plugin.settings.projectDebugPath;
                     const dirPath = projectPath.split('/').slice(0, -1).join('/');
@@ -110,6 +103,8 @@ export class ContextManager {
                 } catch (error) {
                     console.error('Failed to write to project debug file:', error);
                 }
+            } else {
+                console.warn('No project debug path configured - logs will not be saved');
             }
         } catch (error) {
             console.error('Failed to write to debug log:', error);
@@ -132,14 +127,15 @@ export class ContextManager {
             let file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
             if (!file) {
                 await this.logToFile('Profile.md not found, creating new file...');
-                const initialContent = `# User Profile\n\nThis file contains information about the user.\n\n## Updates\n`;
-                file = await this.plugin.app.vault.create(profilePath, initialContent);
+                file = await this.plugin.app.vault.create(profilePath, '');
             }
             
             if (file instanceof TFile) {
                 const currentContent = await this.plugin.app.vault.read(file);
                 const timestamp = new Date().toLocaleString();
-                const updatedContent = currentContent.trim() + `\n\n### Update ${timestamp}\n${content}`;
+                const updatedContent = currentContent.trim() + 
+                    (currentContent.trim() ? '\n\n' : '') + // Only add newlines if there's existing content
+                    `### Update ${timestamp}\n${content}`;
                 
                 await this.plugin.app.vault.modify(file, updatedContent);
                 await this.logToFile('Content updated successfully');
@@ -215,5 +211,10 @@ export class ContextManager {
             console.error('Error reading debug log:', error);
             return ['Error reading debug log: ' + error.message];
         }
+    }
+
+    // Add getter for active files
+    getActiveContextFiles(): Set<string> {
+        return this.activeContextFiles;
     }
 } 
