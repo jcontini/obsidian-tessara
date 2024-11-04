@@ -1,12 +1,9 @@
-import { Plugin, WorkspaceLeaf, Notice } from 'obsidian';
+import { Plugin, WorkspaceLeaf, Notice, TFile } from 'obsidian';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { ConversationView } from './views/ConversationView';
 import { TesseraSettingTab } from './settings';
 import { ANTHROPIC_MODELS } from './models';
 import { ContextManager } from './core/context-manager';
-
-type Provider = 'anthropic';
-type ModelType = 'default' | 'custom';
 
 interface TesseraSettings {
     provider: Provider;
@@ -16,13 +13,18 @@ interface TesseraSettings {
     selectedModel?: string;
 }
 
-const DEFAULT_SETTINGS: TesseraSettings = {
-    provider: 'anthropic',
-    apiKey: '',
-    modelType: 'default',
-    selectedModel: 'claude-3-sonnet-20240229',
-    customModel: ''
-};
+type Provider = 'anthropic';
+type ModelType = 'default' | 'custom';
+
+interface Tool {
+    name: string;
+    description: string;
+    input_schema: {
+        type: "object";
+        properties: Record<string, any>;
+        required?: string[];
+    };
+}
 
 interface ToolInput {
     content: string;
@@ -48,21 +50,18 @@ interface ContextTool extends Tool {
     };
 }
 
-// Define Tool interface based on Claude's API schema
-interface Tool {
-    name: string;
-    description: string;
-    input_schema: {
-        type: "object";
-        properties: Record<string, any>;
-        required?: string[];
-    };
-}
-
 interface ContextUpdate {
     filename: string;
     path: string;
 }
+
+const DEFAULT_SETTINGS: TesseraSettings = {
+    provider: 'anthropic',
+    apiKey: '',
+    modelType: 'default',
+    selectedModel: 'claude-3-sonnet-20240229',
+    customModel: ''
+};
 
 export default class TesseraPlugin extends Plugin {
     private anthropic: Anthropic;
@@ -89,6 +88,108 @@ export default class TesseraPlugin extends Plugin {
 
         this.addRibbonIcon('message-square', 'Tessera Chat', () => {
             this.activateView();
+        });
+
+        this.addCommand({
+            id: 'check-profile',
+            name: 'Check Profile File Status',
+            callback: async () => {
+                const exists = await this.contextManager.checkProfileFile();
+                new Notice(`Profile.md status: ${exists ? 'OK' : 'Not found/Not readable'}`);
+            }
+        });
+
+        // Add command to open developer tools
+        this.addCommand({
+            id: 'open-dev-tools',
+            name: 'Open Developer Tools',
+            callback: () => {
+                // @ts-ignore
+                const win = (window as any).require('electron').remote.getCurrentWindow();
+                win.webContents.toggleDevTools();
+            }
+        });
+
+        // Add command to check context directory
+        this.addCommand({
+            id: 'check-context-dir',
+            name: 'Check Context Directory',
+            callback: async () => {
+                const exists = await this.app.vault.adapter.exists(this.contextManager.basePath);
+                const files = await this.app.vault.adapter.list(this.contextManager.basePath);
+                new Notice(`Context directory exists: ${exists}\nFiles: ${JSON.stringify(files, null, 2)}`);
+                console.log('Context directory contents:', files);
+            }
+        });
+
+        // Add these commands in onload()
+        this.addCommand({
+            id: 'debug-context',
+            name: 'Debug: Show Context Status',
+            callback: async () => {
+                try {
+                    const basePath = this.contextManager.basePath;
+                    const exists = await this.app.vault.adapter.exists(basePath);
+                    const profilePath = `${basePath}/Profile.md`;
+                    const profileExists = await this.app.vault.adapter.exists(profilePath);
+                    
+                    // Show initial status
+                    new Notice(`Checking context status...`, 2000);
+                    
+                    // Show directory status
+                    new Notice(`Context Directory (${basePath}): ${exists ? '✅' : '❌'}`, 3000);
+                    
+                    // Show profile status
+                    new Notice(`Profile.md: ${profileExists ? '✅' : '❌'}`, 3000);
+                    
+                    if (profileExists) {
+                        const file = this.app.vault.getAbstractFileByPath(profilePath);
+                        if (file instanceof TFile) {
+                            const content = await this.app.vault.read(file);
+                            new Notice(`Profile Content Length: ${content.length} chars`, 3000);
+                            console.log('Profile content:', content);
+                        }
+                    }
+                    
+                    // Log to console for additional debugging
+                    console.log('Debug Status:', {
+                        contextDirExists: exists,
+                        profileExists: profileExists,
+                        basePath,
+                        profilePath
+                    });
+                    
+                } catch (error) {
+                    new Notice(`Debug Error: ${error.message}`, 4000);
+                    console.error('Debug error:', error);
+                }
+            }
+        });
+
+        this.addCommand({
+            id: 'test-context-update',
+            name: 'Debug: Test Context Update',
+            callback: async () => {
+                try {
+                    const testContent = `Test update at ${new Date().toLocaleString()}`;
+                    new Notice('🔄 Testing context update...');
+                    
+                    await this.contextManager.appendToUserContext(testContent);
+                    
+                    new Notice('✅ Test update completed - Check Profile.md');
+                } catch (error) {
+                    new Notice(`❌ Test failed: ${error.message}`);
+                    console.error('Test update failed:', error);
+                }
+            }
+        });
+
+        this.addCommand({
+            id: 'open-debug-log',
+            name: 'Open Debug Log File',
+            callback: async () => {
+                await this.contextManager.openDebugLog();
+            }
         });
     }
 
@@ -168,12 +269,21 @@ export default class TesseraPlugin extends Plugin {
 
     async sendMessage(content: string, model?: string) {
         if (!this.anthropic) {
+            await this.contextManager.logToFile('No Claude client initialized', 'ERROR');
             throw new Error('Claude client not initialized');
         }
 
-        const contextContent = await this.contextManager.getContextContent();
+        try {
+            await this.contextManager.logToFile('=== New Message ===', 'INFO');
+            await this.contextManager.logToFile(`User message: ${content}`, 'INFO');
+            
+            const contextContent = await this.contextManager.getContextContent();
+            await this.contextManager.logToFile(`Current context length: ${contextContent.length} chars`, 'DEBUG');
 
-        const systemPrompt = `You are a thoughtful AI assistant focused on helping users achieve their goals while maintaining helpful context about them.
+            // Log the system prompt being used
+            await this.contextManager.logToFile('Preparing system prompt and tools...', 'DEBUG');
+            
+            const systemPrompt = `You are a thoughtful AI assistant focused on helping users achieve their goals while maintaining helpful context about them.
 
 Current context about the user:
 ${contextContent}
@@ -207,170 +317,198 @@ For START_CONVERSATION:
 
 Remember: Focus on what the user wants to discuss. Ask only ONE question at a time to maintain a natural conversation flow.`;
 
-        const tools: ContextTool[] = [
-            {
-                name: "update_context",
-                description: "Append new information about the user to their profile in Context/Profile.md. Use this when you learn important information about the user that should be remembered for future conversations.",
-                input_schema: {
-                    type: "object",
-                    properties: {
-                        content: {
-                            type: "string",
-                            description: "The information to append to the user's profile"
-                        }
-                    },
-                    required: ["content"]
-                }
-            },
-            {
-                name: "create_context_file",
-                description: "Create a new markdown file in the Context folder to store specific information. Use this for organizing different types of context into separate files.",
-                input_schema: {
-                    type: "object",
-                    properties: {
-                        filename: {
-                            type: "string",
-                            description: "Name of the file to create (will append .md if not included)"
+            await this.contextManager.logToFile('Configuring tools...', 'DEBUG');
+            
+            const tools: ContextTool[] = [
+                {
+                    name: "update_context",
+                    description: "Append new information about the user to their profile",
+                    input_schema: {
+                        type: "object",
+                        properties: {
+                            content: {
+                                type: "string",
+                                description: "The information to append to the user's profile"
+                            }
                         },
-                        content: {
-                            type: "string",
-                            description: "Initial content for the file"
-                        }
-                    },
-                    required: ["filename", "content"]
-                }
-            }
-        ];
-
-        // Handle initial message specially
-        if (content === "START_CONVERSATION") {
-            this.conversationHistory = [];
-            const userMessage = {
-                role: 'user' as const,
-                content: "Please start the conversation with a succinct: 'What's on your mind?'."
-            };
-            this.conversationHistory.push(userMessage);
-        } else {
-            this.conversationHistory.push({
-                role: 'user',
-                content: content
-            });
-        }
-
-        const response = await this.anthropic.messages.create({
-            model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
-            max_tokens: 1024,
-            system: systemPrompt,
-            messages: this.conversationHistory,
-            tools: tools
-        });
-
-        // Handle tool use if present
-        if (response.content[0].type === 'tool_use') {
-            const toolUse = response.content[0];
-            let result: string;
-            let contextUpdate: ContextUpdate | null = null;
-
-            try {
-                const toolInput = toolUse.input as ToolInput;
-                
-                if (toolUse.name === 'update_context') {
-                    await this.contextManager.appendToUserContext(toolInput.content);
-                    result = "Context updated successfully";
-                    contextUpdate = {
-                        filename: 'Profile.md',
-                        path: 'Context/Profile.md'
-                    };
-                } else if (toolUse.name === 'create_context_file') {
-                    const path = await this.contextManager.createNewContextFile(
-                        toolInput.filename!,
-                        toolInput.content
-                    );
-                    result = `Created new context file: ${path}`;
-                    contextUpdate = {
-                        filename: toolInput.filename! + (toolInput.filename!.endsWith('.md') ? '' : '.md'),
-                        path: path
-                    };
-                } else {
-                    result = "Unknown tool";
-                }
-
-                // Send tool result back to Claude
-                const toolResponse = await this.anthropic.messages.create({
-                    model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
-                    max_tokens: 1024,
-                    system: systemPrompt,
-                    messages: [
-                        ...this.conversationHistory,
-                        {
-                            role: 'assistant',
-                            content: [toolUse]
+                        required: ["content"]
+                    }
+                },
+                {
+                    name: "create_context_file",
+                    description: "Create a new markdown file in the Context folder to store specific information. Use this for organizing different types of context into separate files.",
+                    input_schema: {
+                        type: "object",
+                        properties: {
+                            filename: {
+                                type: "string",
+                                description: "Name of the file to create (will append .md if not included)"
+                            },
+                            content: {
+                                type: "string",
+                                description: "Initial content for the file"
+                            }
                         },
-                        {
-                            role: 'user',
-                            content: [{
-                                type: 'tool_result',
-                                tool_use_id: toolUse.id,
-                                content: result
-                            }]
-                        }
-                    ]
-                });
-
-                // Add the final response to history
-                if (toolResponse.content[0].type === 'text') {
-                    this.conversationHistory.push({
-                        role: 'assistant',
-                        content: toolResponse.content[0].text
-                    });
+                        required: ["filename", "content"]
+                    }
                 }
+            ];
 
-                // Emit context update event if applicable
-                if (contextUpdate) {
-                    this.app.workspace.getLeavesOfType('tessera-chat').forEach(leaf => {
-                        const view = leaf.view as ConversationView;
-                        if (view?.showContextUpdateNotification && contextUpdate) {
-                            view.showContextUpdateNotification(contextUpdate);
-                        }
-                    });
-                }
+            // Log conversation state
+            await this.contextManager.logToFile(`Conversation history length: ${this.conversationHistory.length} messages`, 'DEBUG');
 
-                return toolResponse;
-            } catch (error) {
-                console.error('Tool execution failed:', error);
-                // Handle tool execution error
-                return this.anthropic.messages.create({
-                    model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
-                    max_tokens: 1024,
-                    messages: [
-                        ...this.conversationHistory,
-                        {
-                            role: 'assistant',
-                            content: [toolUse]
-                        },
-                        {
-                            role: 'user',
-                            content: [{
-                                type: 'tool_result',
-                                tool_use_id: toolUse.id,
-                                content: error.message,
-                                is_error: true
-                            }]
-                        }
-                    ]
+            // Handle initial message specially
+            if (content === "START_CONVERSATION") {
+                await this.contextManager.logToFile('Starting new conversation', 'INFO');
+                this.conversationHistory = [];
+                const userMessage = {
+                    role: 'user' as const,
+                    content: "Please start the conversation with a succinct: 'What's on your mind?'."
+                };
+                this.conversationHistory.push(userMessage);
+            } else {
+                this.conversationHistory.push({
+                    role: 'user',
+                    content: content
                 });
             }
-        }
 
-        // Handle regular text response
-        if (response.content[0].type === 'text') {
-            this.conversationHistory.push({
-                role: 'assistant',
-                content: response.content[0].text
+            // Log API request
+            await this.contextManager.logToFile('Sending request to Claude API...', 'INFO');
+            const response = await this.anthropic.messages.create({
+                model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
+                max_tokens: 1024,
+                system: systemPrompt,
+                messages: this.conversationHistory,
+                tools: tools
             });
-        }
+            await this.contextManager.logToFile('Received response from Claude API', 'INFO');
 
-        return response;
+            // Log response type
+            await this.contextManager.logToFile(`Response type: ${response.content[0].type}`, 'INFO');
+
+            // Handle tool use if present
+            if (response.content[0].type === 'tool_use') {
+                const toolUse = response.content[0];
+                await this.contextManager.logToFile(`Tool use detected: ${toolUse.name}`, 'INFO');
+                await this.contextManager.logToFile(`Tool input: ${JSON.stringify(toolUse.input, null, 2)}`, 'DEBUG');
+
+                let result: string;
+                let contextUpdate: ContextUpdate | null = null;
+
+                try {
+                    const toolInput = toolUse.input as ToolInput;
+                    
+                    if (toolUse.name === 'update_context') {
+                        await this.contextManager.logToFile('Attempting context update...', 'INFO');
+                        new Notice('🔄 Attempting to update context...', 2000);
+                        
+                        await this.contextManager.appendToUserContext(toolInput.content);
+                        result = "Context updated successfully";
+                        contextUpdate = {
+                            filename: 'Profile.md',
+                            path: 'Context/Profile.md'
+                        };
+                        
+                        await this.contextManager.logToFile('Context update successful', 'INFO');
+                        new Notice('✅ Context updated successfully', 2000);
+                    } else if (toolUse.name === 'create_context_file') {
+                        await this.contextManager.logToFile(`Creating new context file: ${toolInput.filename}`, 'INFO');
+                        const path = await this.contextManager.createNewContextFile(
+                            toolInput.filename!,
+                            toolInput.content
+                        );
+                        result = `Created new context file: ${path}`;
+                        contextUpdate = {
+                            filename: toolInput.filename! + (toolInput.filename!.endsWith('.md') ? '' : '.md'),
+                            path: path
+                        };
+                    } else {
+                        result = "Unknown tool";
+                    }
+
+                    // Log tool result
+                    await this.contextManager.logToFile(`Tool result: ${result}`, 'INFO');
+
+                    // Send tool result back to Claude
+                    await this.contextManager.logToFile('Sending tool result back to Claude...', 'DEBUG');
+                    const toolResponse = await this.anthropic.messages.create({
+                        model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
+                        max_tokens: 1024,
+                        system: systemPrompt,
+                        messages: [
+                            ...this.conversationHistory,
+                            {
+                                role: 'assistant',
+                                content: [toolUse]
+                            },
+                            {
+                                role: 'user',
+                                content: [{
+                                    type: 'tool_result',
+                                    tool_use_id: toolUse.id,
+                                    content: result
+                                }]
+                            }
+                        ]
+                    });
+                    await this.contextManager.logToFile('Received tool response from Claude', 'DEBUG');
+
+                    // Add visual notification for context updates
+                    if (contextUpdate) {
+                        this.app.workspace.getLeavesOfType('tessera-chat').forEach(leaf => {
+                            const view = leaf.view as ConversationView;
+                            if (view?.showContextUpdateNotification && contextUpdate) {
+                                view.showContextUpdateNotification(contextUpdate);
+                                this.contextManager.logToFile('Showed context update notification', 'DEBUG');
+                            }
+                        });
+                    }
+
+                    return toolResponse;
+                } catch (error) {
+                    await this.contextManager.logToFile(`Tool execution failed: ${error.message}`, 'ERROR');
+                    new Notice('❌ Failed to update context: ' + error.message, 3000);
+                    // Handle tool execution error
+                    return this.anthropic.messages.create({
+                        model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
+                        max_tokens: 1024,
+                        messages: [
+                            ...this.conversationHistory,
+                            {
+                                role: 'assistant',
+                                content: [toolUse]
+                            },
+                            {
+                                role: 'user',
+                                content: [{
+                                    type: 'tool_result',
+                                    tool_use_id: toolUse.id,
+                                    content: error.message,
+                                    is_error: true
+                                }]
+                            }
+                        ]
+                    });
+                }
+            }
+
+            // Handle regular text response
+            if (response.content[0].type === 'text') {
+                await this.contextManager.logToFile('Processing text response...', 'DEBUG');
+                this.conversationHistory.push({
+                    role: 'assistant',
+                    content: response.content[0].text
+                });
+                await this.contextManager.logToFile('Added response to conversation history', 'DEBUG');
+            }
+
+            return response;
+        } catch (error) {
+            await this.contextManager.logToFile(`Message handling failed: ${error.message}`, 'ERROR');
+            new Notice('❌ Error handling message: ' + error.message, 3000);
+            throw error;
+        }
     }
 
     // Add method to clear conversation history
@@ -396,5 +534,18 @@ Remember: Focus on what the user wants to discuss. Ask only ONE question at a ti
         return response.content[0].type === 'text' 
             ? response.content[0].text.trim()
             : 'Untitled Chat';
+    }
+
+    // Add command to view debug log
+    async viewDebugLog() {
+        const debugLog = await this.contextManager.getDebugLog();
+        const leaf = this.app.workspace.getLeaf(true);
+        await leaf.setViewState({
+            type: 'markdown',
+            state: {
+                mode: 'source',
+                source: debugLog.join('\n')
+            }
+        });
     }
 } 

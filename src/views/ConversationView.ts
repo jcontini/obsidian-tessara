@@ -749,12 +749,16 @@ export class ConversationView extends ItemView {
         </svg>`;
         
         const text = notificationEl.createSpan();
-        text.setText('Updated context: ');
+        text.setText('Updating context: ');
         
         const badge = notificationEl.createEl('button', {
             cls: 'tessera-context-badge',
             text: update.filename
         });
+        
+        // Add loading indicator
+        const loadingEl = notificationEl.createSpan('tessera-loading');
+        loadingEl.innerHTML = '⏳';
         
         badge.addEventListener('click', async () => {
             const file = this.app.vault.getAbstractFileByPath(update.path);
@@ -762,5 +766,11 @@ export class ConversationView extends ItemView {
                 await this.app.workspace.getLeaf(false).openFile(file);
             }
         });
+
+        // Update the notification after a delay to show completion
+        setTimeout(() => {
+            loadingEl.innerHTML = '✅';
+            text.setText('Context updated: ');
+        }, 1000);
     }
 } 

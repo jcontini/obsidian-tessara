@@ -1,11 +1,35 @@
 # Tessera
 
-> An interface for AI-enhanced personal development and knowledge management in Obsidian.
+> An AI-enhanced journaling and self-reflection companion for Obsidian.
 
 ## Overview
-Tessera is an Obsidian plugin that creates a space for exploring ideas and personal growth with AI assistance. Named after the individual pieces that form a mosaic, Tessera helps you build a comprehensive understanding of yourself and your goals through contextual conversations.
+Tessera is an Obsidian plugin that creates an interactive journaling experience where AI helps you explore thoughts and maintain an evolving personal context. It acts as both a conversation partner and an intelligent biographer, helping you:
 
-## Status: Early Development 🚧
+- Engage in natural, reflective conversations
+- Automatically capture and organize personal context
+- Build a structured, local "autobiography" over time
+- Maintain continuity across conversations without repetition
+
+### Key Features
+- **Intelligent Context Management**
+  - Automatically organizes personal information into themed markdown files
+  - Creates and updates files like goals.md, relationships.md, etc.
+  - Splits and reorganizes content as themes develop
+  - Maintains a central autobiography.md with links to specific context files
+
+- **Natural Conversation Flow**
+  - Engages in reflective dialogue
+  - Asks permission before saving important context
+  - Suggests relevant topics based on conversation
+  - Maintains conversation continuity using saved context
+
+- **Privacy-First Design**
+  - All context stored locally in markdown files
+  - Compatible with any LLM (including local models)
+  - Full control over what information is saved
+  - Portable context that works across different AI models
+
+### Current Status: Early Development 🚧
 Currently building the initial MVP with direct Claude API integration.
 
 ### Current Progress
