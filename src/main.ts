@@ -3,14 +3,53 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import { ConversationView } from './views/ConversationView';
 import { TesseraSettingTab } from './settings';
 import { ContextManager } from './context-manager';
-import { 
-    TesseraSettings, 
-    ToolUse,
-    MessageContent,
-    FirstMessageResponse,
-    isUpdateContextInput,
-    UpdateContextInput
-} from './models';
+
+const ANTHROPIC_MODELS = {
+    'claude-3-sonnet-20240229': 'claude-3-sonnet-20240229',
+    'claude-3-opus-20240229': 'claude-3-opus-20240229',
+    'claude-3-haiku-20240307': 'claude-3-haiku-20240307'
+} as const;
+
+interface TesseraSettings {
+    provider: 'anthropic';
+    apiKey: string;
+    modelType: 'default' | 'custom';
+    customModel?: string;
+    selectedModel?: string;
+    projectDebugPath?: string;
+}
+
+interface ToolUse {
+    type: 'tool_use';
+    id: string;
+    name: 'update_context' | 'create_context_file' | 'first_message_response';
+    input: UpdateContextInput | FirstMessageResponseInput;
+}
+
+interface UpdateContextInput {
+    content: string;
+}
+
+interface FirstMessageResponseInput {
+    title: string;
+    response: string;
+}
+
+interface FirstMessageResponse extends ToolUse {
+    name: 'first_message_response';
+    input: {
+        title: string;
+        response: string;
+    };
+}
+
+interface MessageContent {
+    type: 'text' | 'tool_use';
+    text?: string;
+    tool_use?: ToolUse;
+}
+
+export type { TesseraSettings };
 
 const DEFAULT_SETTINGS: TesseraSettings = {
     provider: 'anthropic',
@@ -256,12 +295,12 @@ export default class TesseraPlugin extends Plugin {
     }
 
     private async handleContextUpdate(toolUse: ToolUse) {
-        const input = toolUse.input as UpdateContextInput;
-        if (!isUpdateContextInput(input)) {
-            await this.contextManager.logToFile('Error: Invalid input for context update', 'ERROR');
-            throw new Error('Invalid input for context update');
+        if (toolUse.name !== 'update_context') {
+            await this.contextManager.logToFile('Error: Invalid tool use for context update', 'ERROR');
+            throw new Error('Invalid tool use for context update');
         }
         
+        const input = toolUse.input as UpdateContextInput;
         await this.contextManager.logToFile('Updating context...', 'INFO');
         await this.contextManager.appendToUserContext(input.content);
         await this.contextManager.logToFile('Context updated', 'INFO');
