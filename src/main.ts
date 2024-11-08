@@ -16,7 +16,7 @@ const DEFAULT_SETTINGS: TesseraSettings = {
     modelType: 'default',
     selectedModel: 'claude-3-sonnet-20240229',
     customModel: '',
-    projectDebugPath: 'debug/debug.md'
+    projectDebugPath: undefined
 };
 
 export default class TesseraPlugin extends Plugin {
@@ -27,6 +27,15 @@ export default class TesseraPlugin extends Plugin {
 
     async onload() {
         await this.loadSettings();
+        
+        // Set initial debug path if not already set by user
+        if (this.settings.projectDebugPath) {
+            // Ensure the debug directory exists
+            const debugFolder = this.settings.projectDebugPath.split('/').slice(0, -1).join('/');
+            if (debugFolder && !(await this.app.vault.adapter.exists(debugFolder))) {
+                await this.app.vault.createFolder(debugFolder);
+            }
+        }
         
         this.contextManager = new ContextManager(this);
         await this.contextManager.initialize();

@@ -1,7 +1,5 @@
-import { App, PluginSettingTab, Setting, Notice, DropdownComponent } from 'obsidian';
+import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import TesseraPlugin from './main';
-
-// Import ANTHROPIC_MODELS from main
 import { ANTHROPIC_MODELS } from './models';
 
 export class TesseraSettingTab extends PluginSettingTab {
@@ -140,15 +138,53 @@ export class TesseraSettingTab extends PluginSettingTab {
                     });
             });
 
+        // Debug Path Settings
         new Setting(containerEl)
-            .setName('Project Debug Path')
-            .setDesc('Path to save debug logs in your project directory (e.g., debug/debug.md)')
+            .setName('Debug Log Location')
+            .setDesc('Choose where to save debug logs (relative to vault root). Leave empty to disable logging.')
             .addText(text => text
-                .setPlaceholder('/Users/joe/dev/obsidian-tessara/.context/debug.md')
+                .setPlaceholder('tessera-debug.md')
                 .setValue(this.plugin.settings.projectDebugPath || '')
                 .onChange(async (value) => {
-                    this.plugin.settings.projectDebugPath = value;
+                    // If empty, set to undefined to disable logging
+                    if (!value.trim()) {
+                        this.plugin.settings.projectDebugPath = undefined;
+                    } else {
+                        // Ensure path ends with .md
+                        if (!value.endsWith('.md')) {
+                            value = value + '.md';
+                        }
+                        this.plugin.settings.projectDebugPath = value;
+                    }
                     await this.plugin.saveSettings();
+                }))
+            .addButton(button => button
+                .setButtonText('Create')
+                .setCta()
+                .onClick(async () => {
+                    try {
+                        const path = this.plugin.settings.projectDebugPath;
+                        if (!path) {
+                            new Notice('Please enter a path first');
+                            return;
+                        }
+
+                        // Create folder if it doesn't exist
+                        const folderPath = path.split('/').slice(0, -1).join('/');
+                        if (folderPath && !(await this.app.vault.adapter.exists(folderPath))) {
+                            await this.app.vault.createFolder(folderPath);
+                        }
+
+                        // Create or update file
+                        if (!(await this.app.vault.adapter.exists(path))) {
+                            await this.app.vault.create(path, '');
+                            new Notice('Debug log file created');
+                        } else {
+                            new Notice('Debug log file already exists');
+                        }
+                    } catch (error) {
+                        new Notice(`Failed to create debug log: ${error.message}`);
+                    }
                 }));
     }
 } 

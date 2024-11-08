@@ -1,5 +1,5 @@
 import { TFile, Notice } from 'obsidian';
-import TesseraPlugin from '../main';
+import TesseraPlugin from './main';
 import { existsSync, mkdirSync, appendFileSync } from 'fs';
 
 export class ContextManager {
