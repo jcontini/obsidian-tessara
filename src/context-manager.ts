@@ -4,18 +4,21 @@ import { existsSync, mkdirSync, appendFileSync } from 'fs';
 
 export class ContextManager {
     private activeContextFiles: Set<string> = new Set();
-    private debugLog: string[] = [];
+    private readonly DEBUG_LOG_PATH = 'debug.md';
 
     constructor(private plugin: TesseraPlugin) {}
 
     async initialize() {
         try {
-            // Clear the debug log first
-            if (this.plugin.settings?.projectDebugPath) {
-                await this.plugin.app.vault.adapter.write(
-                    this.plugin.settings.projectDebugPath,
-                    ''
-                );
+            // Create or clear the debug log first
+            const exists = await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH);
+            if (exists) {
+                const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
+                if (file instanceof TFile) {
+                    await this.plugin.app.vault.modify(file, '');
+                }
+            } else {
+                await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, '');
             }
             
             await this.logToFile('Initializing context manager...', 'INFO');
@@ -32,7 +35,7 @@ export class ContextManager {
 
             await this.logToFile(`Active context files after init: ${JSON.stringify(Array.from(this.activeContextFiles))}`, 'DEBUG');
         } catch (error) {
-            await this.logToFile(`Failed to initialize context: ${error.message}`, 'ERROR');
+            console.error('Failed to initialize context manager:', error);
             throw error;
         }
     }
@@ -117,43 +120,35 @@ export class ContextManager {
         const timestamp = new Date().toLocaleString();
         let logEntry = `[${timestamp}] [${level}] ${message}`;
         
-        // Add content details if provided
         if (content) {
-            logEntry += `\nContent: "${content}"`;
+            logEntry += `\nContent:\n${content}`;
         }
         
-        logEntry += '\n';
+        logEntry += '\n\n';
         
         try {
-            // Only log to project directory if path is configured
-            if (this.plugin.settings?.projectDebugPath) {
-                try {
-                    const projectPath = this.plugin.settings.projectDebugPath;
-                    const dirPath = projectPath.split('/').slice(0, -1).join('/');
-                    
-                    // Create directory if it doesn't exist
-                    if (!existsSync(dirPath)) {
-                        mkdirSync(dirPath, { recursive: true });
-                    }
-                    
-                    // Append to file
-                    appendFileSync(projectPath, logEntry);
-                } catch (error) {
-                    console.error('Failed to write to project debug file:', error);
-                }
+            const exists = await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH);
+            if (!exists) {
+                await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, logEntry);
+                console.log('Created new debug log file');
             } else {
-                console.warn('No project debug path configured - logs will not be saved');
+                const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
+                if (file instanceof TFile) {
+                    const currentContent = await this.plugin.app.vault.read(file);
+                    await this.plugin.app.vault.modify(file, currentContent + logEntry);
+                } else {
+                    console.error('Debug log file exists but is not accessible as TFile');
+                    await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, logEntry);
+                }
             }
         } catch (error) {
             console.error('Failed to write to debug log:', error);
         }
     }
 
-    // Update the openDebugLog method to use .md extension
     async openDebugLog() {
-        const logPath = 'debug.md';
-        if (await this.plugin.app.vault.adapter.exists(logPath)) {
-            const file = this.plugin.app.vault.getAbstractFileByPath(logPath);
+        if (await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH)) {
+            const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
             if (file instanceof TFile) {
                 await this.plugin.app.workspace.getLeaf(false).openFile(file);
             }
@@ -162,7 +157,6 @@ export class ContextManager {
         }
     }
 
-    // Add method to check if Profile.md exists and is writable
     async checkProfileFile() {
         const profilePath = 'Profile.md';
         try {
@@ -184,7 +178,6 @@ export class ContextManager {
         }
     }
 
-    // Update the getDebugLog method to use .md extension
     async getDebugLog(): Promise<string[]> {
         try {
             const logPath = 'debug.md';
@@ -201,24 +194,16 @@ export class ContextManager {
         }
     }
 
-    // Add getter for active files
     getActiveContextFiles(): Set<string> {
         return this.activeContextFiles;
     }
 
-    // Add this new method to ContextManager class
     async clearDebugLog() {
-        if (this.plugin.settings?.projectDebugPath) {
-            try {
-                // Clear the file by writing an empty string
-                await this.plugin.app.vault.adapter.write(
-                    this.plugin.settings.projectDebugPath,
-                    ''
-                );
-                await this.logToFile('Debug log cleared for new conversation', 'INFO');
-            } catch (error) {
-                console.error('Failed to clear debug log:', error);
-            }
+        try {
+            await this.plugin.app.vault.adapter.write(this.DEBUG_LOG_PATH, '');
+            await this.logToFile('Debug log cleared for new conversation', 'INFO');
+        } catch (error) {
+            console.error('Failed to clear debug log:', error);
         }
     }
 } 

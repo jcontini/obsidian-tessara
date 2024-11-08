@@ -16,37 +16,28 @@ interface TesseraSettings {
     modelType: 'default' | 'custom';
     customModel?: string;
     selectedModel?: string;
-    projectDebugPath?: string;
 }
 
 interface ToolUse {
     type: 'tool_use';
     id: string;
-    name: 'update_context' | 'create_context_file' | 'first_message_response';
-    input: UpdateContextInput | FirstMessageResponseInput;
+    name: 'update_context';
+    input: UpdateContextInput;
 }
 
 interface UpdateContextInput {
     content: string;
 }
 
-interface FirstMessageResponseInput {
-    title: string;
-    response: string;
-}
-
-interface FirstMessageResponse extends ToolUse {
-    name: 'first_message_response';
-    input: {
-        title: string;
-        response: string;
-    };
-}
-
 interface MessageContent {
     type: 'text' | 'tool_use';
     text?: string;
     tool_use?: ToolUse;
+}
+
+interface Message {
+    role: 'user' | 'assistant';
+    content: string;
 }
 
 export type { TesseraSettings };
@@ -56,15 +47,14 @@ const DEFAULT_SETTINGS: TesseraSettings = {
     apiKey: '',
     modelType: 'default',
     selectedModel: 'claude-3-sonnet-20240229',
-    customModel: '',
-    projectDebugPath: undefined
+    customModel: ''
 };
 
 export default class TesseraPlugin extends Plugin {
     private anthropic: Anthropic;
     settings: TesseraSettings;
     contextManager: ContextManager;
-    private conversationHistory: Array<{ role: 'user' | 'assistant', content: string }> = [];
+    private conversationHistory: Message[] = [];
 
     private readonly TOOLS = {
         UPDATE_CONTEXT: {
@@ -87,24 +77,6 @@ export default class TesseraPlugin extends Plugin {
                 "NEVER infer or assume information",
                 "Only include explicitly stated facts"
             ]
-        },
-        FIRST_MESSAGE_RESPONSE: {
-            name: "first_message_response",
-            description: "Format the first message response with a title and content",
-            input_schema: {
-                type: "object",
-                properties: {
-                    title: {
-                        type: "string",
-                        description: "A brief (3-5 words) descriptive title for the conversation"
-                    },
-                    response: {
-                        type: "string",
-                        description: "Your natural response to the user's message"
-                    }
-                },
-                required: ["title", "response"]
-            }
         }
     };
 
@@ -115,10 +87,6 @@ export default class TesseraPlugin extends Plugin {
         await this.contextManager.initialize();
         
         // Log initial settings
-        if (this.settings.projectDebugPath) {
-            await this.logSettings();
-        }
-        
         if (this.settings.apiKey) {
             this.initializeClaudeClient(this.settings.apiKey);
         }
@@ -235,28 +203,38 @@ export default class TesseraPlugin extends Plugin {
 
         try {
             await this.contextManager.logToFile('=== New Message ===', 'INFO');
-            await this.contextManager.logToFile(`Sending message: ${content}`, 'INFO');
             
             const contextContent = await this.contextManager.getContextContent();
-            await this.contextManager.logToFile(`Context content length: ${contextContent.length}`, 'DEBUG');
+            const systemPrompt = this.getSystemPrompt(contextContent);
             
-            this.conversationHistory.push({
-                role: 'user',
-                content: content
-            });
+            const newMessage: Message = { role: 'user', content };
+            const messages: Message[] = [...this.conversationHistory, newMessage];
+            
+            const messageContext = {
+                model: this.settings.selectedModel || 'claude-3-sonnet-20240229',
+                system: systemPrompt,
+                messages,
+                tools: this.getTools(),
+                max_tokens: 1024
+            };
+            
+            await this.contextManager.logToFile('Sending request to Claude:', 'INFO', 
+                JSON.stringify(messageContext, null, 2)
+            );
+            
+            this.conversationHistory.push(newMessage);
 
             const response = await this.anthropic.messages.create({
-                model: this.settings.selectedModel || 'claude-3-sonnet-20240229',
-                max_tokens: 1024,
-                system: this.getSystemPrompt(contextContent),
-                messages: this.conversationHistory,
-                tools: this.getTools()
+                model: messageContext.model,
+                max_tokens: messageContext.max_tokens,
+                system: messageContext.system,
+                messages: messageContext.messages,
+                tools: messageContext.tools
             });
 
             await this.contextManager.logToFile('Received response from Claude API', 'INFO');
 
             let responseText = '';
-            let chatTitle = null;
 
             // Process tool responses
             for (const content of response.content) {
@@ -264,16 +242,17 @@ export default class TesseraPlugin extends Plugin {
                     const toolUse = content as ToolUse;
                     if (toolUse.name === 'update_context') {
                         await this.handleContextUpdate(toolUse);
-                    } else if (toolUse.name === 'first_message_response' && isFirstMessage) {
-                        const firstMessageResponse = toolUse as FirstMessageResponse;
-                        responseText = firstMessageResponse.input.response;
-                        chatTitle = firstMessageResponse.input.title;
                     }
                 } else if (content.type === 'text') {
                     const textContent = content as MessageContent;
                     responseText = textContent.text || '';
                 }
             }
+
+            // Log the response
+            await this.contextManager.logToFile('Claude response:', 'INFO', 
+                JSON.stringify(response.content, null, 2)
+            );
 
             // Add to conversation history
             if (responseText) {
@@ -283,10 +262,7 @@ export default class TesseraPlugin extends Plugin {
                 });
             }
 
-            return {
-                content: responseText,
-                title: chatTitle
-            };
+            return { content: responseText };
 
         } catch (error) {
             await this.contextManager.logToFile(`Error in sendMessage: ${error.message}`, 'ERROR');
@@ -319,34 +295,23 @@ Current context about the user:
 ${contextContent}
 
 IMPORTANT INSTRUCTIONS:
-1. For the first message in a conversation:
-   - Use the first_message_response tool to provide your response
-   - If the user shares personal information, also use the update_context tool
-
-2. For all messages:
+1. For all messages:
    - When users share new information about themselves, use the update_context tool
    - Keep responses helpful and engaging
    - Focus on the current topic without repeating profile content
 
-3. After using update_context tool:
+2. After using update_context tool:
    - Continue the conversation naturally
    - Don't reference the profile update
    - Focus on engaging with their message`;
     }
 
     private getTools(): any[] {
-        return [
-            {
-                name: this.TOOLS.UPDATE_CONTEXT.name,
-                description: this.TOOLS.UPDATE_CONTEXT.description,
-                input_schema: this.TOOLS.UPDATE_CONTEXT.input_schema
-            },
-            {
-                name: this.TOOLS.FIRST_MESSAGE_RESPONSE.name,
-                description: this.TOOLS.FIRST_MESSAGE_RESPONSE.description,
-                input_schema: this.TOOLS.FIRST_MESSAGE_RESPONSE.input_schema
-            }
-        ];
+        return [{
+            name: this.TOOLS.UPDATE_CONTEXT.name,
+            description: this.TOOLS.UPDATE_CONTEXT.description,
+            input_schema: this.TOOLS.UPDATE_CONTEXT.input_schema
+        }];
     }
 
     private async logSettings() {

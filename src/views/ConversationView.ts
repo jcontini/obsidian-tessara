@@ -17,7 +17,6 @@ export class ConversationView extends ItemView {
     private messages: ChatMessage[] = [];
     private messageContainer: HTMLElement;
     private inputContainer: HTMLElement;
-    private chatName: string | null = null;
     private lastFailedMessage: string | null = null;
 
     constructor(
@@ -163,11 +162,6 @@ export class ConversationView extends ItemView {
             const response = await this.plugin.sendMessage(content, isFirstMessage);
             loadingEl.parentElement?.remove();
 
-            // Set chat title if this was the first message
-            if (isFirstMessage && response.title) {
-                this.chatName = response.title;
-            }
-
             const assistantMessage: ChatMessage = {
                 role: 'assistant',
                 content: response.content,
@@ -268,38 +262,27 @@ export class ConversationView extends ItemView {
             return;
         }
 
-        // Create base Saved Chats folder if it doesn't exist
         const basePath = 'Saved Chats';
         if (!(await this.app.vault.adapter.exists(basePath))) {
             await this.app.vault.createFolder(basePath);
         }
 
-        // Create date-based folder (format: YYYY-MM-DD)
         const today = new Date().toISOString().slice(0, 10);
         const datePath = `${basePath}/${today}`;
         if (!(await this.app.vault.adapter.exists(datePath))) {
             await this.app.vault.createFolder(datePath);
         }
 
-        const filename = `${datePath}/${this.chatName || 'Untitled Chat'}.md`;
-
-        // Add numeric suffix if file already exists
-        let finalFilename = filename;
-        let counter = 1;
-        while (await this.app.vault.adapter.exists(finalFilename)) {
-            finalFilename = `${datePath}/${this.chatName || 'Untitled Chat'} (${counter}).md`;
-            counter++;
-        }
+        const timestamp = new Date().toLocaleTimeString().replace(/:/g, '-');
+        const filename = `${datePath}/Chat ${timestamp}.md`;
 
         const markdown = await this.generateConversationMarkdown();
 
-        // Save the file
         try {
-            await this.app.vault.create(finalFilename, markdown);
+            await this.app.vault.create(filename, markdown);
             new Notice('Conversation saved');
             
-            // Open the file in a new leaf
-            const abstractFile = this.app.vault.getAbstractFileByPath(finalFilename);
+            const abstractFile = this.app.vault.getAbstractFileByPath(filename);
             if (abstractFile instanceof TFile) {
                 await this.app.workspace.getLeaf(false).openFile(abstractFile);
             }
@@ -310,17 +293,10 @@ export class ConversationView extends ItemView {
     }
 
     private async startNewChat() {
-        // Clear existing messages
         this.messages = [];
         this.messageContainer.empty();
-        
-        // Clear chat name
-        this.chatName = null;
-        
-        // Clear conversation history and debug log in plugin
         await this.plugin.clearConversationHistory();
         
-        // Show initial prompt
         const initialPrompt = this.messageContainer.createDiv('tessera-message-wrapper assistant');
         const promptMessage = initialPrompt.createDiv('tessera-message assistant');
         promptMessage.setText("What's on your mind?");
@@ -624,10 +600,9 @@ export class ConversationView extends ItemView {
         document.head.append(style);
     }
 
-    // Add new method to generate markdown content
     private async generateConversationMarkdown(): Promise<string> {
-        let markdown = `# ${this.chatName || 'Chat History'}\n\n`;
-        markdown += `*${new Date().toLocaleString()}*\n\n`;
+        const timestamp = new Date().toLocaleString();
+        let markdown = `# Chat ${timestamp}\n\n`;
         
         for (const msg of this.messages) {
             const icon = msg.role === 'assistant' ? '🔹' : '🟠';
@@ -639,7 +614,6 @@ export class ConversationView extends ItemView {
         return markdown;
     }
 
-    // Add new method to copy conversation
     private async copyConversation() {
         if (this.messages.length === 0) {
             new Notice('No messages to copy');
