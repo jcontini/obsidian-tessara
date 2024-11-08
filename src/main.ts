@@ -3,6 +3,7 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import { ConversationView } from './views/ConversationView';
 import { TesseraSettingTab } from './settings';
 import { ContextManager } from './context-manager';
+import { normalizePath } from 'obsidian';
 
 const ANTHROPIC_MODELS = {
     'claude-3-sonnet-20240229': 'claude-3-sonnet-20240229',
@@ -215,12 +216,16 @@ export default class TesseraPlugin extends Plugin {
 
     async sendMessage(content: string) {
         if (!this.anthropic) {
-            await this.contextManager.logToFile('No Claude client initialized', 'ERROR');
+            if (this.settings.debugMode) {
+                await this.contextManager.logToFile('No Claude client initialized', 'ERROR');
+            }
             throw new Error('Claude client not initialized');
         }
 
         try {
-            await this.contextManager.logToFile('=== New Message ===', 'INFO');
+            if (this.settings.debugMode) {
+                await this.contextManager.logToFile('=== New Conversation ===', 'INFO');
+            }
             
             const contextContent = await this.contextManager.getContextContent();
             const systemPrompt = this.getSystemPrompt(contextContent);
@@ -233,42 +238,35 @@ export default class TesseraPlugin extends Plugin {
                 system: systemPrompt,
                 messages,
                 tools: this.getTools(),
-                max_tokens: 1024
+                max_tokens: 4096
             };
             
-            await this.contextManager.logToFile('Sending request to Claude:', 'INFO', 
-                JSON.stringify(messageContext, null, 2)
-            );
+            if (this.settings.debugMode) {
+                await this.contextManager.logToFile('Sending request to Claude:', 'INFO', 
+                    JSON.stringify(messageContext, null, 2)
+                );
+            }
             
             this.conversationHistory.push(newMessage);
 
-            const response = await this.anthropic.messages.create({
-                model: messageContext.model,
-                max_tokens: messageContext.max_tokens,
-                system: messageContext.system,
-                messages: messageContext.messages,
-                tools: messageContext.tools
-            });
+            const response = await this.anthropic.messages.create(messageContext);
 
             await this.contextManager.logToFile('Received response from Claude API', 'INFO');
 
             let responseText = '';
-            let toolUses: ToolUse[] = [];
 
-            // First collect all content
+            // Process all content first to build complete response
             for (const content of response.content) {
-                if (content.type === 'tool_use') {
-                    toolUses.push(content as ToolUse);
-                } else if (content.type === 'text') {
+                if (content.type === 'text') {
                     const textContent = content as MessageContent;
                     responseText += (responseText ? '\n\n' : '') + (textContent.text || '');
                 }
             }
 
-            // Then process tool uses
-            for (const toolUse of toolUses) {
-                if (toolUse.name === 'update_context') {
-                    await this.handleContextUpdate(toolUse);
+            // Then process tool uses after collecting all text
+            for (const content of response.content) {
+                if (content.type === 'tool_use') {
+                    await this.handleContextUpdate(content as ToolUse);
                 }
             }
 
@@ -283,7 +281,9 @@ export default class TesseraPlugin extends Plugin {
             return { content: responseText };
 
         } catch (error) {
-            await this.contextManager.logToFile(`Error in sendMessage: ${error.message}`, 'ERROR');
+            if (this.settings.debugMode) {
+                await this.contextManager.logToFile(`Error in sendMessage: ${error.message}`, 'ERROR');
+            }
             throw error;
         }
     }
@@ -318,10 +318,16 @@ export default class TesseraPlugin extends Plugin {
     - Keep their profile updated as they tell you more about themselves. Never assume/infer/make things up.
 
 # CONVERSATION RULES
-    - If they don't seem to have a clear goal, ask them what they'd like to focus on. Use their profile info to offer suggestions. 
+    - ALWAYS answer the user's question first before any other actions
     - Be succinct & structured. Short & sweet. Use dot points & short paragraphs to improve readability.
     - Always end each message with a question that is relevant to their goal for the conversation.
     - Ask the question at the bottom of the message, on a new line. Only ask one question at a time.
+    - If they don't seem to have a clear goal, ask them what they'd like to focus on.
+
+# RESPONSE FORMAT
+    1. Direct answer to user's question (required)
+    2. Any relevant context or follow-up information (optional)
+    3. One relevant follow-up question on a new line (required)
 
 # SPECIAL CASES
     - If the user asks what you know about them, 
@@ -332,6 +338,7 @@ export default class TesseraPlugin extends Plugin {
     - Only update the profile when the user gives information related to their life, work, relationships, goals, concerns, etc
     - Do not update the profile with your thoughts. Focus on keeping it like a sort of dossier on the user.
     - They will see a UI indication when their profile is updated, so no need to be explicit about it.
+    - IMPORTANT: Tool use should happen silently in the background - always focus on answering the user's question first
 
 # Current content of Profile.md:
 ${contextContent || '// We know nothing about the user yet. Do not make things up! Be upfront about that, and follow conversation rules to guide the conversation.'}

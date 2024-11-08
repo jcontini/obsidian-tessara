@@ -1,4 +1,4 @@
-import { TFile, Notice } from 'obsidian';
+import { TFile, Notice, normalizePath } from 'obsidian';
 import TesseraPlugin from './main';
 
 export class ContextManager {
@@ -10,36 +10,22 @@ export class ContextManager {
     async initialize() {
         try {
             if (this.plugin.settings.debugMode) {
-                // Create or clear the debug log first
-                const exists = await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH);
-                if (exists) {
-                    const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
-                    if (file instanceof TFile) {
-                        await this.plugin.app.vault.modify(file, '');
-                    }
+                // Handle debug.md file
+                const debugFile = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
+                if (debugFile instanceof TFile) {
+                    await this.plugin.app.vault.modify(debugFile, '# Debug Log\n\n');
                 } else {
-                    await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, '');
+                    await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, '# Debug Log\n\n');
                 }
-                
-                await this.logToFile('Initializing context manager...', 'INFO');
+                await this.logToFile('Context manager initialized', 'INFO');
             }
             
             const profilePath = 'Profile.md';
             if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
                 await this.plugin.app.vault.create(profilePath, '');
                 this.activeContextFiles.add(profilePath);
-                if (this.plugin.settings.debugMode) {
-                    await this.logToFile(`Created empty Profile.md`, 'INFO');
-                }
             } else {
                 this.activeContextFiles.add(profilePath);
-                if (this.plugin.settings.debugMode) {
-                    await this.logToFile(`Added existing Profile.md to active files`, 'INFO');
-                }
-            }
-
-            if (this.plugin.settings.debugMode) {
-                await this.logToFile(`Active context files after init: ${JSON.stringify(Array.from(this.activeContextFiles))}`, 'DEBUG');
             }
         } catch (error) {
             console.error('Failed to initialize context manager:', error);
@@ -123,34 +109,23 @@ export class ContextManager {
         this.activeContextFiles.clear();
     }
 
-    public async logToFile(message: string, level: 'INFO' | 'ERROR' | 'DEBUG' = 'INFO', content?: string) {
-        if (!this.plugin.settings.debugMode) {
-            return;
-        }
+    public async logToFile(message: string, level: 'INFO' | 'ERROR' | 'DEBUG', content?: string) {
+        // Only log if debug mode is enabled
+        if (!this.plugin.settings.debugMode) return;
 
-        const timestamp = new Date().toLocaleString();
-        let logEntry = `[${timestamp}] [${level}] ${message}`;
-        
-        if (content) {
-            logEntry += `\nContent:\n${content}`;
-        }
-        
-        logEntry += '\n\n';
-        
         try {
-            const exists = await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH);
-            if (!exists) {
-                await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, logEntry);
-                console.log('Created new debug log file');
-            } else {
-                const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
-                if (file instanceof TFile) {
-                    const currentContent = await this.plugin.app.vault.read(file);
-                    await this.plugin.app.vault.modify(file, currentContent + logEntry);
-                } else {
-                    console.error('Debug log file exists but is not accessible as TFile');
-                    await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, logEntry);
-                }
+            const timestamp = new Date().toLocaleString();
+            let logMessage = `[${timestamp}] [${level}] ${message}\n`;
+            
+            if (content) {
+                logMessage += `\`\`\`\n${content}\n\`\`\`\n`;
+            }
+            logMessage += '\n';
+            
+            const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
+            if (file instanceof TFile) {
+                const currentContent = await this.plugin.app.vault.read(file);
+                await this.plugin.app.vault.modify(file, currentContent + logMessage);
             }
         } catch (error) {
             console.error('Failed to write to debug log:', error);
@@ -158,11 +133,14 @@ export class ContextManager {
     }
 
     async openDebugLog() {
-        if (await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH)) {
-            const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
-            if (file instanceof TFile) {
-                await this.plugin.app.workspace.getLeaf(false).openFile(file);
-            }
+        if (!this.plugin.settings.debugMode) {
+            new Notice('Debug mode is not enabled');
+            return;
+        }
+
+        const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
+        if (file instanceof TFile) {
+            await this.plugin.app.workspace.getLeaf(false).openFile(file);
         } else {
             new Notice('Debug log file does not exist yet');
         }
