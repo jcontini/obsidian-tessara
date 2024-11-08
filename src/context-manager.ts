@@ -1,6 +1,5 @@
 import { TFile, Notice } from 'obsidian';
 import TesseraPlugin from './main';
-import { existsSync, mkdirSync, appendFileSync } from 'fs';
 
 export class ContextManager {
     private activeContextFiles: Set<string> = new Set();
@@ -10,30 +9,38 @@ export class ContextManager {
 
     async initialize() {
         try {
-            // Create or clear the debug log first
-            const exists = await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH);
-            if (exists) {
-                const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
-                if (file instanceof TFile) {
-                    await this.plugin.app.vault.modify(file, '');
+            if (this.plugin.settings.debugMode) {
+                // Create or clear the debug log first
+                const exists = await this.plugin.app.vault.adapter.exists(this.DEBUG_LOG_PATH);
+                if (exists) {
+                    const file = this.plugin.app.vault.getAbstractFileByPath(this.DEBUG_LOG_PATH);
+                    if (file instanceof TFile) {
+                        await this.plugin.app.vault.modify(file, '');
+                    }
+                } else {
+                    await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, '');
                 }
-            } else {
-                await this.plugin.app.vault.create(this.DEBUG_LOG_PATH, '');
+                
+                await this.logToFile('Initializing context manager...', 'INFO');
             }
-            
-            await this.logToFile('Initializing context manager...', 'INFO');
             
             const profilePath = 'Profile.md';
             if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
                 await this.plugin.app.vault.create(profilePath, '');
                 this.activeContextFiles.add(profilePath);
-                await this.logToFile(`Created empty Profile.md`, 'INFO');
+                if (this.plugin.settings.debugMode) {
+                    await this.logToFile(`Created empty Profile.md`, 'INFO');
+                }
             } else {
                 this.activeContextFiles.add(profilePath);
-                await this.logToFile(`Added existing Profile.md to active files`, 'INFO');
+                if (this.plugin.settings.debugMode) {
+                    await this.logToFile(`Added existing Profile.md to active files`, 'INFO');
+                }
             }
 
-            await this.logToFile(`Active context files after init: ${JSON.stringify(Array.from(this.activeContextFiles))}`, 'DEBUG');
+            if (this.plugin.settings.debugMode) {
+                await this.logToFile(`Active context files after init: ${JSON.stringify(Array.from(this.activeContextFiles))}`, 'DEBUG');
+            }
         } catch (error) {
             console.error('Failed to initialize context manager:', error);
             throw error;
@@ -117,6 +124,10 @@ export class ContextManager {
     }
 
     public async logToFile(message: string, level: 'INFO' | 'ERROR' | 'DEBUG' = 'INFO', content?: string) {
+        if (!this.plugin.settings.debugMode) {
+            return;
+        }
+
         const timestamp = new Date().toLocaleString();
         let logEntry = `[${timestamp}] [${level}] ${message}`;
         
@@ -196,14 +207,5 @@ export class ContextManager {
 
     getActiveContextFiles(): Set<string> {
         return this.activeContextFiles;
-    }
-
-    async clearDebugLog() {
-        try {
-            await this.plugin.app.vault.adapter.write(this.DEBUG_LOG_PATH, '');
-            await this.logToFile('Debug log cleared for new conversation', 'INFO');
-        } catch (error) {
-            console.error('Failed to clear debug log:', error);
-        }
     }
 } 

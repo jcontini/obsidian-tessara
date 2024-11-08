@@ -1,6 +1,12 @@
 import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import TesseraPlugin from './main';
-import { ANTHROPIC_MODELS } from './models';
+import { ConversationView } from './views/ConversationView';
+
+const ANTHROPIC_MODELS = {
+    'claude-3-sonnet-20240229': 'claude-3-sonnet-20240229',
+    'claude-3-opus-20240229': 'claude-3-opus-20240229',
+    'claude-3-haiku-20240307': 'claude-3-haiku-20240307'
+} as const;
 
 export class TesseraSettingTab extends PluginSettingTab {
     private tempApiKey: string;
@@ -138,47 +144,18 @@ export class TesseraSettingTab extends PluginSettingTab {
                     });
             });
 
-        // Debug Path Settings
+        // Debug Mode toggle
         new Setting(containerEl)
-            .setName('Debug Log Location')
-            .setDesc('Choose where to save debug logs (relative to vault root). Leave empty to disable logging.')
-            .addText(text => text
-                .setPlaceholder('tessera-debug.md')
-                .setValue(this.plugin.settings.projectDebugPath || '')
+            .setName('Debug Mode')
+            .setDesc('Enable debug logging to debug.md in vault root')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.debugMode)
                 .onChange(async (value) => {
-                    // If empty, set to undefined to disable logging
-                    if (!value.trim()) {
-                        this.plugin.settings.projectDebugPath = undefined;
-                    } else {
-                        // Ensure path ends with .md
-                        if (!value.endsWith('.md')) {
-                            value = value + '.md';
-                        }
-                        this.plugin.settings.projectDebugPath = value;
-                    }
+                    this.plugin.settings.debugMode = value;
                     await this.plugin.saveSettings();
-                }))
-            .addButton(button => button
-                .setButtonText('Create')
-                .setCta()
-                .onClick(async () => {
-                    try {
-                        const path = this.plugin.settings.projectDebugPath;
-                        if (!path) {
-                            new Notice('Please enter a path first');
-                            return;
-                        }
-
-                        // Only create the file using the adapter directly
-                        if (!(await this.app.vault.adapter.exists(path))) {
-                            await this.app.vault.adapter.write(path, '');
-                            new Notice('Debug log file created');
-                        } else {
-                            new Notice('Debug log file already exists');
-                        }
-                    } catch (error) {
-                        new Notice(`Failed to create debug log: ${error.message}`);
-                    }
+                    // Trigger view refresh to show/hide debug button
+                    this.app.workspace.getLeavesOfType('tessera-chat')
+                        .forEach(leaf => (leaf.view as ConversationView).refresh());
                 }));
     }
 } 

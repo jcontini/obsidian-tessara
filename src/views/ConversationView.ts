@@ -43,6 +43,8 @@ export class ConversationView extends ItemView {
         
         // Header with buttons
         const header = chatContainer.createDiv('tessera-chat-header');
+        
+        // Remove left buttons section and debug clear button
         const headerButtons = header.createDiv('tessera-header-buttons');
 
         // New chat button
@@ -508,7 +510,7 @@ export class ConversationView extends ItemView {
 
             .tessera-chat-header {
                 display: flex;
-                justify-content: flex-end;
+                justify-content: space-between;
                 padding: 0.5rem;
                 border-bottom: 1px solid var(--background-modifier-border);
                 margin-bottom: 0.5rem;
@@ -593,6 +595,21 @@ export class ConversationView extends ItemView {
             .tessera-context-badge:hover {
                 background-color: var(--interactive-accent);
                 color: var(--text-on-accent);
+            }
+
+            .tessera-header-buttons-left,
+            .tessera-header-buttons-right {
+                display: flex;
+                gap: 0.5rem;
+            }
+
+            .tessera-header-buttons-left .tessera-header-button {
+                color: var(--text-muted);
+            }
+
+            .tessera-header-buttons-left .tessera-header-button:hover {
+                color: var(--text-error);
+                background-color: var(--background-modifier-error);
             }
         `;
         document.head.append(style);
@@ -692,5 +709,9 @@ export class ConversationView extends ItemView {
             loadingEl.innerHTML = '✅';
             text.setText('Context updated: ');
         }, 1000);
+    }
+
+    refresh() {
+        this.onOpen();
     }
 } 

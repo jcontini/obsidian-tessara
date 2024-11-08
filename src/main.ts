@@ -16,6 +16,7 @@ interface TesseraSettings {
     modelType: 'default' | 'custom';
     customModel?: string;
     selectedModel?: string;
+    debugMode: boolean;
 }
 
 interface ToolUse {
@@ -47,7 +48,8 @@ const DEFAULT_SETTINGS: TesseraSettings = {
     apiKey: '',
     modelType: 'default',
     selectedModel: 'claude-3-sonnet-20240229',
-    customModel: ''
+    customModel: '',
+    debugMode: false
 };
 
 export default class TesseraPlugin extends Plugin {
@@ -285,7 +287,6 @@ export default class TesseraPlugin extends Plugin {
     // Add method to clear conversation history
     clearConversationHistory() {
         this.conversationHistory = [];
-        this.contextManager.clearDebugLog();
     }
 
     private getSystemPrompt(contextContent: string): string {
