@@ -145,16 +145,25 @@ export class ConversationView extends ItemView {
         const loadingEl = this.showLoadingIndicator();
 
         try {
+            console.log('Sending initial message...');
             const response = await this.plugin.sendMessage(
-                "START_CONVERSATION", // Special trigger for initial message
+                "START_CONVERSATION",
                 this.plugin.settings.selectedModel
             );
+            console.log('Received initial response:', response);
 
             loadingEl.parentElement?.remove();
+
+            if (!response || !response.content || !response.content[0]) {
+                console.error('Invalid response structure:', response);
+                throw new Error('Invalid response structure');
+            }
 
             const responseText = response.content[0].type === 'text' 
                 ? response.content[0].text 
                 : 'Failed to start conversation';
+
+            console.log('Response text:', responseText);
 
             const welcomeMessage: ChatMessage = {
                 role: 'assistant',
@@ -170,8 +179,16 @@ export class ConversationView extends ItemView {
             loadingEl.parentElement?.remove();
             
             const errorWrapper = this.messageContainer.createDiv('tessera-message-wrapper assistant');
-            errorWrapper.createDiv('tessera-message error')
-                .setText('Failed to start conversation');
+            const errorMessage = errorWrapper.createDiv('tessera-message error');
+            errorMessage.setText(error instanceof Error ? `Error: ${error.message}` : 'Failed to start conversation');
+            
+            // Add retry button
+            const retryButton = errorWrapper.createDiv('tessera-retry-button');
+            retryButton.setText('Retry');
+            retryButton.addEventListener('click', () => {
+                errorWrapper.remove();
+                this.sendInitialMessage();
+            });
         }
     }
 

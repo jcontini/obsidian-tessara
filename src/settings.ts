@@ -169,15 +169,9 @@ export class TesseraSettingTab extends PluginSettingTab {
                             return;
                         }
 
-                        // Create folder if it doesn't exist
-                        const folderPath = path.split('/').slice(0, -1).join('/');
-                        if (folderPath && !(await this.app.vault.adapter.exists(folderPath))) {
-                            await this.app.vault.createFolder(folderPath);
-                        }
-
-                        // Create or update file
+                        // Only create the file using the adapter directly
                         if (!(await this.app.vault.adapter.exists(path))) {
-                            await this.app.vault.create(path, '');
+                            await this.app.vault.adapter.write(path, '');
                             new Notice('Debug log file created');
                         } else {
                             new Notice('Debug log file already exists');

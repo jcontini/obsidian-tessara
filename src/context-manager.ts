@@ -16,22 +16,10 @@ export class ContextManager {
             if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
                 await this.plugin.app.vault.create(profilePath, '');
                 this.activeContextFiles.add(profilePath);
-                await this.logToFile(`Created new Profile.md in root`, 'INFO');
-                
-                const file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
-                if (file instanceof TFile) {
-                    const content = await this.plugin.app.vault.read(file);
-                    await this.logToFile('Initial Profile State:', 'DEBUG', content);
-                }
+                await this.logToFile(`Created empty Profile.md`, 'INFO');
             } else {
                 this.activeContextFiles.add(profilePath);
                 await this.logToFile(`Added existing Profile.md to active files`, 'INFO');
-                
-                const file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
-                if (file instanceof TFile) {
-                    const content = await this.plugin.app.vault.read(file);
-                    await this.logToFile('Current Profile State:', 'DEBUG', content);
-                }
             }
 
             await this.logToFile(`Active context files after init: ${JSON.stringify(Array.from(this.activeContextFiles))}`, 'DEBUG');
