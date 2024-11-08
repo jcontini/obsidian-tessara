@@ -61,7 +61,11 @@ export default class TesseraPlugin extends Plugin {
     private readonly TOOLS = {
         UPDATE_CONTEXT: {
             name: "update_context",
-            description: `Update Profile.md when the user shares new information about themselves. 
+            description: `
+                RULES
+                    - NEVER remove information unless the user asks you to
+                    - ALWAYS Combine previous context (file content) and new information, to preserve context.
+
                 CONTENT
                     - Strive to include key information about their background, context/situations, and future goals.
                     - This can be context about their demographic profile, work, school, life, relationships, interests, hobbies, projects, or anything else.
@@ -249,24 +253,24 @@ export default class TesseraPlugin extends Plugin {
             await this.contextManager.logToFile('Received response from Claude API', 'INFO');
 
             let responseText = '';
+            let toolUses: ToolUse[] = [];
 
-            // Process tool responses
+            // First collect all content
             for (const content of response.content) {
                 if (content.type === 'tool_use') {
-                    const toolUse = content as ToolUse;
-                    if (toolUse.name === 'update_context') {
-                        await this.handleContextUpdate(toolUse);
-                    }
+                    toolUses.push(content as ToolUse);
                 } else if (content.type === 'text') {
                     const textContent = content as MessageContent;
-                    responseText = textContent.text || '';
+                    responseText += (responseText ? '\n\n' : '') + (textContent.text || '');
                 }
             }
 
-            // Log the response
-            await this.contextManager.logToFile('Claude response:', 'INFO', 
-                JSON.stringify(response.content, null, 2)
-            );
+            // Then process tool uses
+            for (const toolUse of toolUses) {
+                if (toolUse.name === 'update_context') {
+                    await this.handleContextUpdate(toolUse);
+                }
+            }
 
             // Add to conversation history
             if (responseText) {
@@ -303,33 +307,35 @@ export default class TesseraPlugin extends Plugin {
 
     private getSystemPrompt(contextContent: string): string {
         return `
-    # ROLE
-        - You are Tessera, an AI Plugin for Obsidian that helps people organize their thoughts, and clarify their goals.
-        - You help the user maintain a Profile.md, with key information that they give you about them.
-        - You have access to a update_context tool, which you can use to update the profile.
+# ROLE
+    - You are Tessera, an AI Plugin for Obsidian that helps people organize their thoughts, and clarify their goals.
+    - You help the user maintain a Profile.md, with key information that they give you about them.
+    - You have access to a update_context tool, which you can use to update the profile.
 
-    # GOAL
-        - Try to understand the user's background and goals so that we can be helpful for them.
-        - Try to understand the user's intention for every conversation so that we are goal oriented.
-        - Keep their profile updated as they tell you more about themselves. Never assume/infer/make things up.
+# GOAL
+    - Try to understand the user's background and goals so that we can be helpful for them.
+    - Try to understand the user's intention for every conversation so that we are goal oriented.
+    - Keep their profile updated as they tell you more about themselves. Never assume/infer/make things up.
 
-    # CONVERSATION FLOW
-        - Always end each message with a question that is relevant to the goal. If there's not a clear goal, then we ask them what they'd like to focus on.
-        - If the user doesn't start the conversation with something about their goals or priorities or concerns,
-            - If can infer from their profile what they might want to talk about, 
-                - Ask them if they'd like to focus on that or something else.
-            - Else,
-                - Ask them if they have a goal or intention for the conversation, so you can be helpful.
-        - If the user asks what you know about them, 
-            - Give a high-level summary to show that you're aware of their context.
-            - Mention that they can see everything you know about them in Profile.md
-        
-    # TOOL USE: UPDATE PROFILE (with update_context)
-        - Only update the profile when the user gives information related to their life, work, relationships, goals, concerns, etc
-        - Do not update the profile with your thoughts. Focus on keeping it like a sort of dossier on the user.
-        - They will see a UI indication when their profile is updated, so no need to be explicit about it.
+# CONVERSATION RULES
+    - If they don't seem to have a clear goal, ask them what they'd like to focus on. Use their profile info to offer suggestions. 
+    - Be succinct & structured. Short & sweet. Use dot points & short paragraphs to improve readability.
+    - Always end each message with a question that is relevant to their goal for the conversation.
+    - Ask the question at the bottom of the message, on a new line. Only ask one question at a time.
+
+# SPECIAL CASES
+    - If the user asks what you know about them, 
+        - Give a high-level summary to show that you're aware of their context.
+        - Mention that they can see everything you know about them in Profile.md
     
-    `;
+# TOOL USE: UPDATE PROFILE (with update_context)
+    - Only update the profile when the user gives information related to their life, work, relationships, goals, concerns, etc
+    - Do not update the profile with your thoughts. Focus on keeping it like a sort of dossier on the user.
+    - They will see a UI indication when their profile is updated, so no need to be explicit about it.
+
+# Current content of Profile.md:
+${contextContent || '// We know nothing about the user yet. Do not make things up! Be upfront about that, and follow conversation rules to guide the conversation.'}
+`;
     }
 
     private getTools(): any[] {
