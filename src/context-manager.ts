@@ -1,6 +1,5 @@
 import { TFile, Notice } from 'obsidian';
 import TesseraPlugin from '../main';
-import { join } from 'path';
 import { existsSync, mkdirSync, appendFileSync } from 'fs';
 
 export class ContextManager {
@@ -13,15 +12,26 @@ export class ContextManager {
         try {
             await this.logToFile('Initializing context manager...', 'INFO');
             
-            // Check for Profile.md in root
             const profilePath = 'Profile.md';
             if (!(await this.plugin.app.vault.adapter.exists(profilePath))) {
                 await this.plugin.app.vault.create(profilePath, '');
                 this.activeContextFiles.add(profilePath);
                 await this.logToFile(`Created new Profile.md in root`, 'INFO');
+                
+                const file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
+                if (file instanceof TFile) {
+                    const content = await this.plugin.app.vault.read(file);
+                    await this.logToFile('Initial Profile State:', 'DEBUG', content);
+                }
             } else {
                 this.activeContextFiles.add(profilePath);
                 await this.logToFile(`Added existing Profile.md to active files`, 'INFO');
+                
+                const file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
+                if (file instanceof TFile) {
+                    const content = await this.plugin.app.vault.read(file);
+                    await this.logToFile('Current Profile State:', 'DEBUG', content);
+                }
             }
 
             await this.logToFile(`Active context files after init: ${JSON.stringify(Array.from(this.activeContextFiles))}`, 'DEBUG');
@@ -35,20 +45,18 @@ export class ContextManager {
         const profilePath = 'Profile.md';
         
         try {
-            await this.logToFile(`Attempting to update profile at: ${profilePath}`);
+            await this.logToFile(`Attempting to update profile at: ${profilePath}`, 'INFO');
             
-            // Check if file exists and is accessible
             let file = this.plugin.app.vault.getAbstractFileByPath(profilePath);
             
-            // If file doesn't exist or isn't accessible, create a new one
             if (!file || !(file instanceof TFile)) {
                 try {
-                    await this.logToFile('Profile.md not found or inaccessible, creating new file...');
+                    await this.logToFile('Profile.md not found or inaccessible, creating new file...', 'INFO');
                     file = await this.plugin.app.vault.create(profilePath, '');
+                    await this.logToFile(`Created new file with content:`, 'INFO', content);
                 } catch (createError) {
-                    // If creation fails due to existing file, try to delete and recreate
                     if (createError.message.includes('exists')) {
-                        await this.logToFile('File exists but inaccessible, attempting to recreate...');
+                        await this.logToFile('File exists but inaccessible, attempting to recreate...', 'INFO');
                         await this.plugin.app.vault.adapter.remove(profilePath);
                         file = await this.plugin.app.vault.create(profilePath, '');
                     } else {
@@ -59,9 +67,10 @@ export class ContextManager {
             
             if (file instanceof TFile) {
                 await this.plugin.app.vault.modify(file, content);
-                await this.logToFile('Content updated successfully');
-                new Notice('✅ Profile updated successfully');
+                await this.logToFile('Content updated successfully', 'INFO');
+                await this.logToFile('Updated Profile.md content:', 'INFO', content);
                 
+                new Notice('✅ Profile updated successfully');
                 this.activeContextFiles.add(profilePath);
             } else {
                 throw new Error('Failed to access Profile.md as a file');
@@ -79,6 +88,8 @@ export class ContextManager {
         }
         const path = await this.plugin.app.vault.create(name, content);
         this.activeContextFiles.add(path.path);
+        await this.logToFile(`Created new context file: ${name}`, 'INFO');
+        await this.logToFile('New file content:', 'INFO', content);
         return path.path;
     }
 

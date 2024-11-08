@@ -2,82 +2,13 @@ import { Plugin, WorkspaceLeaf, Notice, TFile } from 'obsidian';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { ConversationView } from './views/ConversationView';
 import { TesseraSettingTab } from './settings';
-import { ANTHROPIC_MODELS } from './models';
-import { ContextManager } from './core/context-manager';
-
-interface TesseraSettings {
-    provider: Provider;
-    apiKey: string;
-    modelType: ModelType;
-    customModel?: string;
-    selectedModel?: string;
-    projectDebugPath?: string;
-}
-
-type Provider = 'anthropic';
-type ModelType = 'default' | 'custom';
-
-interface Tool {
-    name: string;
-    description: string;
-    input_schema: {
-        type: "object";
-        properties: Record<string, any>;
-        required?: string[];
-    };
-}
-
-interface ToolInput {
-    content: string;
-    filename?: string;
-}
-
-interface ContextTool extends Tool {
-    name: "update_context" | "create_context_file";
-    description: string;
-    input_schema: {
-        type: "object";
-        properties: {
-            content: {
-                type: "string";
-                description: string;
-            };
-            filename?: {
-                type: "string";
-                description: string;
-            };
-        };
-        required: string[];
-    };
-}
-
-interface ContextUpdate {
-    filename: string;
-    path: string;
-}
-
-interface ToolUse {
-    type: 'tool_use';
-    id: string;
-    name: 'update_context' | 'create_context_file';
-    input: {
-        content: string;
-        filename?: string;
-    };
-}
-
-interface ToolResult {
-    type: 'tool_result';
-    tool_use_id: string;
-    content: string;
-    is_error?: boolean;
-}
-
-interface MessageContent {
-    type: 'text' | 'tool_use';
-    text?: string;
-    tool_use?: ToolUse;
-}
+import { ContextManager } from './context-manager';
+import { 
+    TesseraSettings, 
+    ToolUse, 
+    ContextTool,
+    MessageContent 
+} from './models';
 
 const DEFAULT_SETTINGS: TesseraSettings = {
     provider: 'anthropic',
@@ -116,91 +47,12 @@ export default class TesseraPlugin extends Plugin {
         });
 
         this.addCommand({
-            id: 'check-profile',
-            name: 'Check Profile File Status',
-            callback: async () => {
-                const exists = await this.contextManager.checkProfileFile();
-                new Notice(`Profile.md status: ${exists ? 'OK' : 'Not found/Not readable'}`);
-            }
-        });
-
-        // Add command to open developer tools
-        this.addCommand({
             id: 'open-dev-tools',
             name: 'Open Developer Tools',
             callback: () => {
                 // @ts-ignore
                 const win = (window as any).require('electron').remote.getCurrentWindow();
                 win.webContents.toggleDevTools();
-            }
-        });
-
-        // Add command to check context directory
-        this.addCommand({
-            id: 'check-context-dir',
-            name: 'Check Profile Status',
-            callback: async () => {
-                const exists = await this.app.vault.adapter.exists('Profile.md');
-                const file = this.app.vault.getAbstractFileByPath('Profile.md');
-                if (file instanceof TFile) {
-                    const content = await this.app.vault.read(file);
-                    new Notice(`Profile.md exists: ${exists}\nSize: ${content.length} chars`);
-                    console.log('Profile content:', content);
-                } else {
-                    new Notice('Profile.md not found or not accessible');
-                }
-            }
-        });
-
-        // Add these commands in onload()
-        this.addCommand({
-            id: 'debug-context',
-            name: 'Debug: Show Context Status',
-            callback: async () => {
-                try {
-                    const profilePath = 'Profile.md';
-                    const exists = await this.app.vault.adapter.exists(profilePath);
-                    const profileExists = await this.app.vault.adapter.exists(profilePath);
-                    
-                    new Notice(`Checking context status...`, 2000);
-                    new Notice(`Profile.md: ${exists ? '✅' : '❌'}`, 3000);
-                    
-                    if (profileExists) {
-                        const file = this.app.vault.getAbstractFileByPath(profilePath);
-                        if (file instanceof TFile) {
-                            const content = await this.app.vault.read(file);
-                            new Notice(`Profile Content Length: ${content.length} chars`, 3000);
-                            console.log('Profile content:', content);
-                        }
-                    }
-                    
-                    console.log('Debug Status:', {
-                        profileExists: exists,
-                        profilePath
-                    });
-                    
-                } catch (error) {
-                    new Notice(`Debug Error: ${error.message}`, 4000);
-                    console.error('Debug error:', error);
-                }
-            }
-        });
-
-        this.addCommand({
-            id: 'test-context-update',
-            name: 'Debug: Test Context Update',
-            callback: async () => {
-                try {
-                    const testContent = `Test update at ${new Date().toLocaleString()}`;
-                    new Notice('🔄 Testing context update...');
-                    
-                    await this.contextManager.appendToUserContext(testContent);
-                    
-                    new Notice('✅ Test update completed - Check Profile.md');
-                } catch (error) {
-                    new Notice(`❌ Test failed: ${error.message}`);
-                    console.error('Test update failed:', error);
-                }
             }
         });
 
@@ -401,7 +253,7 @@ export default class TesseraPlugin extends Plugin {
         return [
             {
                 name: "update_context",
-                description: `Update the user's profile as a biographical narrative, using ONLY explicitly shared personal information.
+                description: `Update the context file(s) based on new information the user gives you. This can be demographic information, context about their work, life, relationships, interests, hobbies, or anything else. You create a Profile on the person (biography, goals, concerns, etc) structured in markdown.
 
 CRITICAL RULES:
 - NEVER infer, assume, or generate information not directly stated by the user
@@ -450,7 +302,7 @@ FORMAT REQUIREMENTS:
             },
             {
                 name: "create_context_file",
-                description: "Create a new context file for organizing specific types of information. Use proper markdown formatting and structure.",
+                description: "Create a new context file for organizing specific types of information. This can be demographic information, context about their work, life, relationships, interests, hobbies, or anything else. You create a Profile on the person (biography, goals, concerns, etc) structured in markdown.",
                 input_schema: {
                     type: "object",
                     properties: {
@@ -572,13 +424,13 @@ FORMAT REQUIREMENTS:
 
     // Add this method to the TesseraPlugin class
     private getSystemPrompt(contextContent: string): string {
-        return `You are a thoughtful AI assistant focused on helping users achieve their goals while maintaining helpful context about them.
+        return `You are an AI assistant that help users organize their thoughts. You do this by documenting things that they tell you, especially about themselves.
 
 Current context about the user:
 ${contextContent}
 
 CRITICAL INSTRUCTION: You MUST use tools BEFORE sending ANY text response when:
-1. User shares MEANINGFUL personal information (name, location, preferences, etc.)
+1. User shares information (name, location, preferences, etc.)
 2. You need to create a new context file for organizing specific types of information
 
 Tool Usage Rules:
@@ -588,16 +440,11 @@ Tool Usage Rules:
 4. Do NOT create conversation files - conversations are handled automatically
 
 Response Guidelines:
-1. ONLY say "What's on your mind?" for START_CONVERSATION messages
-2. For all other messages:
-   - Respond naturally and conversationally
-   - When asked about what you know, provide a natural summary rather than listing facts
-   - Focus on the most relevant aspects based on the current conversation
-   - Synthesize information rather than repeating it verbatim
-   - Use a friendly, conversational tone
-   - NEVER repeat profile content verbatim
-   - Ask relevant follow-up questions when appropriate
-   - If asked about specific aspects, focus only on those aspects
-   - Maintain a natural flow of conversation`;
+- Respond naturally and conversationally
+- When asked about what you know, provide a natural summary rather than listing facts
+- Synthesize information rather than repeating it verbatim
+- Use a friendly, conversational tone
+- Keep asking information that might be relevant to their situations
+- Maintain a natural flow of conversation`;
     }
 } 
