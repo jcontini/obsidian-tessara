@@ -145,8 +145,6 @@ export class ConversationView extends ItemView {
     async sendMessage(content: string) {
         if (!content.trim()) return;
 
-        const isFirstMessage = this.messages.length === 0;
-        
         const userMessage: ChatMessage = {
             role: 'user',
             content: content.trim(),
@@ -159,7 +157,7 @@ export class ConversationView extends ItemView {
         const loadingEl = this.showLoadingIndicator();
 
         try {
-            const response = await this.plugin.sendMessage(content, isFirstMessage);
+            const response = await this.plugin.sendMessage(content);
             loadingEl.parentElement?.remove();
 
             const assistantMessage: ChatMessage = {

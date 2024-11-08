@@ -195,7 +195,7 @@ export default class TesseraPlugin extends Plugin {
         }
     }
 
-    async sendMessage(content: string, isFirstMessage: boolean = false) {
+    async sendMessage(content: string) {
         if (!this.anthropic) {
             await this.contextManager.logToFile('No Claude client initialized', 'ERROR');
             throw new Error('Claude client not initialized');
