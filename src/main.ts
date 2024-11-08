@@ -5,9 +5,12 @@ import { TesseraSettingTab } from './settings';
 import { ContextManager } from './context-manager';
 import { 
     TesseraSettings, 
-    ToolUse
+    ToolUse,
+    MessageContent,
+    FirstMessageResponse,
+    isUpdateContextInput,
+    UpdateContextInput
 } from './models';
-import { Prompts } from './prompts';
 
 const DEFAULT_SETTINGS: TesseraSettings = {
     provider: 'anthropic',
@@ -23,6 +26,48 @@ export default class TesseraPlugin extends Plugin {
     settings: TesseraSettings;
     contextManager: ContextManager;
     private conversationHistory: Array<{ role: 'user' | 'assistant', content: string }> = [];
+
+    private readonly TOOLS = {
+        UPDATE_CONTEXT: {
+            name: "update_context",
+            description: "Update Profile.md when the user shares new information about themselves. This can be demographic information, context about their work, life, relationships, interests, hobbies, or anything else.",
+            input_schema: {
+                type: "object",
+                properties: {
+                    content: {
+                        type: "string",
+                        description: "The verified, factual biographical content for the profile - NO assumptions or inferences"
+                    }
+                },
+                required: ["content"]
+            },
+            rules: [
+                "ONLY update when user explicitly shares information",
+                "NEVER create placeholder or fictional content",
+                "NEVER update for general conversation or greetings",
+                "NEVER infer or assume information",
+                "Only include explicitly stated facts"
+            ]
+        },
+        FIRST_MESSAGE_RESPONSE: {
+            name: "first_message_response",
+            description: "Format the first message response with a title and content",
+            input_schema: {
+                type: "object",
+                properties: {
+                    title: {
+                        type: "string",
+                        description: "A brief (3-5 words) descriptive title for the conversation"
+                    },
+                    response: {
+                        type: "string",
+                        description: "Your natural response to the user's message"
+                    }
+                },
+                required: ["title", "response"]
+            }
+        }
+    };
 
     async onload() {
         await this.loadSettings();
@@ -143,7 +188,7 @@ export default class TesseraPlugin extends Plugin {
         }
     }
 
-    async sendMessage(content: string, model?: string) {
+    async sendMessage(content: string, isFirstMessage: boolean = false) {
         if (!this.anthropic) {
             await this.contextManager.logToFile('No Claude client initialized', 'ERROR');
             throw new Error('Claude client not initialized');
@@ -153,155 +198,116 @@ export default class TesseraPlugin extends Plugin {
             await this.contextManager.logToFile('=== New Message ===', 'INFO');
             await this.contextManager.logToFile(`Sending message: ${content}`, 'INFO');
             
-            if (this.conversationHistory.length > 0) {
-                await this.contextManager.logToFile('Current conversation history:', 'DEBUG', 
-                    JSON.stringify(this.conversationHistory, null, 2)
-                );
-            }
-            
             const contextContent = await this.contextManager.getContextContent();
             await this.contextManager.logToFile(`Context content length: ${contextContent.length}`, 'DEBUG');
-            await this.contextManager.logToFile('Context content:', 'DEBUG', contextContent);
-
-            // Handle initial message specially
-            if (content === "START_CONVERSATION") {
-                await this.contextManager.logToFile('Starting new conversation', 'INFO');
-                this.conversationHistory = [];
-                const userMessage = {
-                    role: 'user' as const,
-                    content: Prompts.INITIAL_MESSAGE
-                };
-                this.conversationHistory.push(userMessage);
-                await this.contextManager.logToFile('Added initial message to history', 'DEBUG');
-            } else {
-                this.conversationHistory.push({
-                    role: 'user',
-                    content: content
-                });
-            }
-
-            await this.contextManager.logToFile('Preparing Claude API request...', 'INFO');
-            await this.contextManager.logToFile('Using model:', 'DEBUG', model || this.settings.selectedModel);
             
-            const systemPrompt = this.getSystemPrompt(contextContent);
-            await this.contextManager.logToFile('System prompt:', 'DEBUG', systemPrompt);
+            this.conversationHistory.push({
+                role: 'user',
+                content: content
+            });
 
             const response = await this.anthropic.messages.create({
-                model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
+                model: this.settings.selectedModel || 'claude-3-sonnet-20240229',
                 max_tokens: 1024,
-                system: systemPrompt,
+                system: this.getSystemPrompt(contextContent),
                 messages: this.conversationHistory,
                 tools: this.getTools()
             });
 
             await this.contextManager.logToFile('Received response from Claude API', 'INFO');
-            await this.contextManager.logToFile('Response content:', 'DEBUG', 
-                JSON.stringify(response.content, null, 2)
-            );
 
-            // Handle tool use if present
-            if (response.content[0].type === 'tool_use') {
-                const toolUse = response.content[0];
-                await this.contextManager.logToFile('AI using tool', 'INFO', toolUse.name);
-                await this.contextManager.logToFile('Tool input', 'DEBUG', JSON.stringify(toolUse.input, null, 2));
+            let responseText = '';
+            let chatTitle = null;
 
-                try {
-                    await this.handleToolUse(toolUse);
-                    await this.contextManager.logToFile('Tool use completed successfully', 'INFO');
-                    // After tool use, get a follow-up response without the profile content
-                    return await this.getFollowUpResponse(content, model);
-                } catch (error) {
-                    await this.contextManager.logToFile(`Tool error: ${error.message}`, 'ERROR');
-                    throw error;
+            // Process tool responses
+            for (const content of response.content) {
+                if (content.type === 'tool_use') {
+                    const toolUse = content as ToolUse;
+                    if (toolUse.name === 'update_context') {
+                        await this.handleContextUpdate(toolUse);
+                    } else if (toolUse.name === 'first_message_response' && isFirstMessage) {
+                        const firstMessageResponse = toolUse as FirstMessageResponse;
+                        responseText = firstMessageResponse.input.response;
+                        chatTitle = firstMessageResponse.input.title;
+                    }
+                } else if (content.type === 'text') {
+                    const textContent = content as MessageContent;
+                    responseText = textContent.text || '';
                 }
             }
 
-            // Handle regular text response
-            if (response.content[0].type === 'text') {
-                await this.contextManager.logToFile('Adding assistant response to history', 'DEBUG');
+            // Add to conversation history
+            if (responseText) {
                 this.conversationHistory.push({
                     role: 'assistant',
-                    content: response.content[0].text
+                    content: responseText
                 });
             }
 
-            return response;
+            return {
+                content: responseText,
+                title: chatTitle
+            };
+
         } catch (error) {
             await this.contextManager.logToFile(`Error in sendMessage: ${error.message}`, 'ERROR');
-            if (error instanceof Error) {
-                await this.contextManager.logToFile('Error stack:', 'ERROR', error.stack || 'No stack trace');
-            }
             throw error;
         }
     }
 
-    private async handleToolUse(toolUse: any) {
-        if (toolUse.name === 'update_context') {
-            await this.contextManager.logToFile('Updating context...', 'INFO');
-            await this.contextManager.appendToUserContext(toolUse.input.content);
-            await this.contextManager.logToFile('Context updated', 'INFO');
+    private async handleContextUpdate(toolUse: ToolUse) {
+        const input = toolUse.input as UpdateContextInput;
+        if (!isUpdateContextInput(input)) {
+            await this.contextManager.logToFile('Error: Invalid input for context update', 'ERROR');
+            throw new Error('Invalid input for context update');
         }
-    }
-
-    private async getFollowUpResponse(originalContent: string, model?: string) {
-        // Get a follow-up response that focuses on interaction rather than profile content
-        return await this.anthropic.messages.create({
-            model: model || this.settings.selectedModel || 'claude-3-sonnet-20240229',
-            max_tokens: 1024,
-            system: Prompts.POST_UPDATE_SYSTEM,
-            messages: [{
-                role: 'user',
-                content: originalContent
-            }]
-        });
-    }
-
-    private getTools(): any[] {
-        return [{
-            name: "update_context",
-            description: Prompts.TOOLS.UPDATE_CONTEXT.description,
-            input_schema: {
-                type: "object",
-                properties: {
-                    content: {
-                        type: "string",
-                        description: Prompts.TOOLS.UPDATE_CONTEXT.inputDescription
-                    }
-                },
-                required: ["content"]
-            }
-        }];
+        
+        await this.contextManager.logToFile('Updating context...', 'INFO');
+        await this.contextManager.appendToUserContext(input.content);
+        await this.contextManager.logToFile('Context updated', 'INFO');
     }
 
     // Add method to clear conversation history
     clearConversationHistory() {
         this.conversationHistory = [];
+        this.contextManager.clearDebugLog();
     }
 
-    async generateChatName(firstMessage: string): Promise<string> {
-        if (!this.anthropic) {
-            throw new Error('Claude client not initialized');
-        }
-
-        const response = await this.anthropic.messages.create({
-            model: this.settings.selectedModel || 'claude-3-sonnet-20240229',
-            max_tokens: 50,
-            messages: [{
-                role: 'user',
-                content: Prompts.CHAT_TITLE.user(firstMessage)
-            }],
-            system: Prompts.CHAT_TITLE.system
-        });
-
-        return response.content[0].type === 'text' 
-            ? response.content[0].text.trim()
-            : 'Untitled Chat';
-    }
-
-
-    // Add this method to the TesseraPlugin class
     private getSystemPrompt(contextContent: string): string {
-        return Prompts.MAIN_SYSTEM(contextContent);
+        return `You are an AI assistant that helps users organize their thoughts and document information about themselves.
+
+Current context about the user:
+${contextContent}
+
+IMPORTANT INSTRUCTIONS:
+1. For the first message in a conversation:
+   - Use the first_message_response tool to provide your response
+   - If the user shares personal information, also use the update_context tool
+
+2. For all messages:
+   - When users share new information about themselves, use the update_context tool
+   - Keep responses helpful and engaging
+   - Focus on the current topic without repeating profile content
+
+3. After using update_context tool:
+   - Continue the conversation naturally
+   - Don't reference the profile update
+   - Focus on engaging with their message`;
+    }
+
+    private getTools(): any[] {
+        return [
+            {
+                name: this.TOOLS.UPDATE_CONTEXT.name,
+                description: this.TOOLS.UPDATE_CONTEXT.description,
+                input_schema: this.TOOLS.UPDATE_CONTEXT.input_schema
+            },
+            {
+                name: this.TOOLS.FIRST_MESSAGE_RESPONSE.name,
+                description: this.TOOLS.FIRST_MESSAGE_RESPONSE.description,
+                input_schema: this.TOOLS.FIRST_MESSAGE_RESPONSE.input_schema
+            }
+        ];
     }
 
     private async logSettings() {

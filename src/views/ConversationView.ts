@@ -137,64 +137,17 @@ export class ConversationView extends ItemView {
         // Add styles
         this.addStyles();
 
-        // Show welcome message using the API
-        await this.sendInitialMessage();
-    }
-
-    private async sendInitialMessage() {
-        const loadingEl = this.showLoadingIndicator();
-
-        try {
-            console.log('Sending initial message...');
-            const response = await this.plugin.sendMessage(
-                "START_CONVERSATION",
-                this.plugin.settings.selectedModel
-            );
-            console.log('Received initial response:', response);
-
-            loadingEl.parentElement?.remove();
-
-            if (!response || !response.content || !response.content[0]) {
-                console.error('Invalid response structure:', response);
-                throw new Error('Invalid response structure');
-            }
-
-            const responseText = response.content[0].type === 'text' 
-                ? response.content[0].text 
-                : 'Failed to start conversation';
-
-            console.log('Response text:', responseText);
-
-            const welcomeMessage: ChatMessage = {
-                role: 'assistant',
-                content: responseText,
-                timestamp: Date.now()
-            };
-            
-            this.messages.push(welcomeMessage);
-            await this.renderMessage(welcomeMessage);
-
-        } catch (error) {
-            console.error('Failed to start conversation:', error);
-            loadingEl.parentElement?.remove();
-            
-            const errorWrapper = this.messageContainer.createDiv('tessera-message-wrapper assistant');
-            const errorMessage = errorWrapper.createDiv('tessera-message error');
-            errorMessage.setText(error instanceof Error ? `Error: ${error.message}` : 'Failed to start conversation');
-            
-            // Add retry button
-            const retryButton = errorWrapper.createDiv('tessera-retry-button');
-            retryButton.setText('Retry');
-            retryButton.addEventListener('click', () => {
-                errorWrapper.remove();
-                this.sendInitialMessage();
-            });
-        }
+        // Show initial prompt without API call
+        const initialPrompt = this.messageContainer.createDiv('tessera-message-wrapper assistant');
+        const promptMessage = initialPrompt.createDiv('tessera-message assistant');
+        promptMessage.setText("What's on your mind?");
     }
 
     async sendMessage(content: string) {
         if (!content.trim()) return;
 
+        const isFirstMessage = this.messages.length === 0;
+        
         const userMessage: ChatMessage = {
             role: 'user',
             content: content.trim(),
@@ -204,30 +157,20 @@ export class ConversationView extends ItemView {
         this.messages.push(userMessage);
         await this.renderMessage(userMessage);
 
-        // Generate chat name after first user message
-        if (!this.chatName && this.messages.filter(m => m.role === 'user').length === 1) {
-            try {
-                const response = await this.plugin.generateChatName(content);
-                this.chatName = response.replace(/[<>:"/\\|?*]/g, '-').trim();
-            } catch (error) {
-                console.error('Failed to generate chat name:', error);
-                this.chatName = 'Untitled Chat';
-            }
-        }
-
         const loadingEl = this.showLoadingIndicator();
 
         try {
-            const response = await this.plugin.sendMessage(content);
+            const response = await this.plugin.sendMessage(content, isFirstMessage);
             loadingEl.parentElement?.remove();
 
-            const responseText = response.content[0].type === 'text' 
-                ? response.content[0].text 
-                : 'Received non-text response';
+            // Set chat title if this was the first message
+            if (isFirstMessage && response.title) {
+                this.chatName = response.title;
+            }
 
             const assistantMessage: ChatMessage = {
                 role: 'assistant',
-                content: responseText,
+                content: response.content,
                 timestamp: Date.now()
             };
             
@@ -374,11 +317,13 @@ export class ConversationView extends ItemView {
         // Clear chat name
         this.chatName = null;
         
-        // Clear conversation history in plugin
-        this.plugin.clearConversationHistory();
+        // Clear conversation history and debug log in plugin
+        await this.plugin.clearConversationHistory();
         
-        // Show welcome message
-        await this.sendInitialMessage();
+        // Show initial prompt
+        const initialPrompt = this.messageContainer.createDiv('tessera-message-wrapper assistant');
+        const promptMessage = initialPrompt.createDiv('tessera-message assistant');
+        promptMessage.setText("What's on your mind?");
     }
 
     private addStyles() {
@@ -681,20 +626,6 @@ export class ConversationView extends ItemView {
 
     // Add new method to generate markdown content
     private async generateConversationMarkdown(): Promise<string> {
-        // Generate chat name if needed
-        if (!this.chatName && this.messages.length > 0) {
-            const firstUserMessage = this.messages.find(m => m.role === 'user')?.content;
-            if (firstUserMessage) {
-                try {
-                    const response = await this.plugin.generateChatName(firstUserMessage);
-                    this.chatName = response.replace(/[<>:"/\\|?*]/g, '-').trim();
-                } catch (error) {
-                    console.error('Failed to generate chat name:', error);
-                    this.chatName = 'Untitled Chat';
-                }
-            }
-        }
-
         let markdown = `# ${this.chatName || 'Chat History'}\n\n`;
         markdown += `*${new Date().toLocaleString()}*\n\n`;
         

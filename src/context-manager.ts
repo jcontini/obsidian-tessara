@@ -10,6 +10,14 @@ export class ContextManager {
 
     async initialize() {
         try {
+            // Clear the debug log first
+            if (this.plugin.settings?.projectDebugPath) {
+                await this.plugin.app.vault.adapter.write(
+                    this.plugin.settings.projectDebugPath,
+                    ''
+                );
+            }
+            
             await this.logToFile('Initializing context manager...', 'INFO');
             
             const profilePath = 'Profile.md';
@@ -196,5 +204,21 @@ export class ContextManager {
     // Add getter for active files
     getActiveContextFiles(): Set<string> {
         return this.activeContextFiles;
+    }
+
+    // Add this new method to ContextManager class
+    async clearDebugLog() {
+        if (this.plugin.settings?.projectDebugPath) {
+            try {
+                // Clear the file by writing an empty string
+                await this.plugin.app.vault.adapter.write(
+                    this.plugin.settings.projectDebugPath,
+                    ''
+                );
+                await this.logToFile('Debug log cleared for new conversation', 'INFO');
+            } catch (error) {
+                console.error('Failed to clear debug log:', error);
+            }
+        }
     }
 } 

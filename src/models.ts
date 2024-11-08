@@ -57,13 +57,27 @@ export interface ContextUpdate {
     path: string;
 }
 
+export interface UpdateContextInput {
+    content: string;
+}
+
+export interface FirstMessageResponseInput {
+    title: string;
+    response: string;
+}
+
 export interface ToolUse {
     type: 'tool_use';
     id: string;
-    name: 'update_context' | 'create_context_file';
+    name: 'update_context' | 'create_context_file' | 'first_message_response';
+    input: UpdateContextInput | FirstMessageResponseInput;
+}
+
+export interface FirstMessageResponse extends ToolUse {
+    name: 'first_message_response';
     input: {
-        content: string;
-        filename?: string;
+        title: string;
+        response: string;
     };
 }
 
@@ -78,4 +92,17 @@ export interface MessageContent {
     type: 'text' | 'tool_use';
     text?: string;
     tool_use?: ToolUse;
+}
+
+export interface APIResponse {
+    content: (MessageContent | ToolUse)[];
+}
+
+// Type guard functions
+export function isUpdateContextInput(input: any): input is UpdateContextInput {
+    return 'content' in input && typeof input.content === 'string';
+}
+
+export function isFirstMessageResponseInput(input: any): input is FirstMessageResponseInput {
+    return 'title' in input && 'response' in input;
 } 
